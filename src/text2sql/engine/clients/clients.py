@@ -26,7 +26,7 @@ def get_async_azure_client(api_key: str, api_version: str, azure_endpoint: str) 
     return client
 
 
-def get_bedrock_client(service_name: str, region_name: str) -> boto3.client:
+def get_bedrock_client(region_name: str, service_name: str = "bedrock-runtime") -> boto3.client:
     """get bedrock client"""
     return boto3.client(
         service_name=service_name,
