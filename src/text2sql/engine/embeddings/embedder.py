@@ -4,7 +4,8 @@ import cohere
 import json
 import tqdm
 
-from openai import AsyncAzureOpenAI, AzureOpenAI
+from loguru import logger
+from openai import AzureOpenAI
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from text2sql.engine.clients import get_azure_client, get_bedrock_client, get_cohere_client
@@ -130,3 +131,71 @@ class BedrockCohereEmbedder(BaseEmbedder):
         embeddings_dict: dict = response_body.get("embeddings")
         embeddings = embeddings_dict.get(self.embedding_type)
         return embeddings
+
+
+class BedrockTitanv2Embedder(BaseEmbedder):
+    """embed texts using Titan v2 embeddings on Amazon Bedrock API"""
+
+    def __init__(
+        self,
+        region_name: str,
+        model: str,
+        dimensions: int = 1024,
+        normalize: bool = True,
+        embedding_type: str = "float",
+        service_name: str = "bedrock-runtime",
+        batch_size: int = 1,
+        max_chars: int = 1024,
+    ):
+        """embed texts using Amazon Bedrock API
+
+        Args:
+            region_name (str): aws region name
+            model (str): bedrock model id
+            dimensions (int): number of dimensions. Defaults to 1024.
+            normalize (bool, optional): normalize embeddings. Defaults to True.
+            embedding_type (str, optional): embedding type. Defaults to "float".
+            service_name (str, optional): bedrock service name. Defaults to "bedrock-runtime".
+            batch_size (int, optional): batch size - must be 1 for titan. Defaults to 1.
+            max_chars (int, optional): max chars. Defaults to 1024.
+        """
+        if batch_size != 1:
+            logger.warning("batch_size is set to 1 for Titan v2 embeddings")
+            batch_size = 1
+        self.region_name = region_name
+        self.service_name = service_name
+        self.model = model
+        self.dimensions = dimensions
+        self.embedding_type = embedding_type
+        self.normalize = normalize
+        self.batch_size = batch_size
+        self.max_chars = max_chars
+        self.client = get_bedrock_client(
+            service_name=self.service_name,
+            region_name=self.region_name,
+        )
+
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    def _embed_batch(self, batch_samples: list[str]) -> list[list[float]]:
+        """embed one batch of texts"""
+        if len(batch_samples) != 1:
+            raise ValueError("batch_size must be 1 for Titan v2 embeddings")
+        request_body = json.dumps(
+            {
+                "inputText": batch_samples[0],
+                "dimensions": self.dimensions,
+                "normalize": self.normalize,
+                "embeddingTypes": [self.embedding_type],
+            }
+        )
+        response = self.client.invoke_model(
+            body=request_body,
+            modelId=self.model,
+            accept="*/*",
+            contentType="application/json",
+        )
+        # the documentation uses like response['embeddingByTypes']['binary']
+        # except this is not correct!
+        response_body = json.loads(response.get("body").read())
+        embedding: list = response_body.get("embedding")
+        return [embedding]
