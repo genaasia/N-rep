@@ -56,6 +56,8 @@ use `git flow` process *and* tool for preparing releases (merging dev to main)!
 3. for preparing numbered releases, use `git-flow` and merge from `dev` to `main` via `release/x.x.x` branch
 4. before `finish` ing the release, bump the `version.py` number!
 5. use the `git push origin --tags` to update the version info on GitHub!
+6. also need to `push` local changes on *both* `main` and `dev`
+7. go to github repo page -> releases -> releases -> draft new release -> select tag -> autogenerate docs
 
 see the `git-flow` [cheatsheet](http://danielkummer.github.io/git-flow-cheatsheet/) for help.
 
