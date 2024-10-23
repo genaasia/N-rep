@@ -211,3 +211,5 @@ terraform.rc
 **/.ipynb_checkpoints
 **/.pytest_cache
 **/__pycache__
+
+**/.npy

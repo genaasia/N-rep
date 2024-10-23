@@ -2,6 +2,33 @@
 
 module-based code for running text2sql tests
 
+## development progress
+
+- [ ] preprocessors:
+    - [ ] pinterest style query summarizer
+    - [ ] pinterest style table summarizer
+- [x] embeddings:
+    - [x] azure embedder
+    - [x] bedrock cohere embedder
+    - [x] bedrock titan v2 embedder
+    - [ ] (*later*) cohere embedder
+    - [ ] (*later*) azure async embedder
+- [ ] retrieval:
+    - [ ] local retriever
+    - [ ] weaviate retiever
+- [ ] schema formatter:
+    - [ ] sqlite formatter
+    - [ ] mysql formatter
+    - [ ] postgres formatter
+- [ ] generation:
+    - [ ] few-shot logic (following DAIL-SQL)
+    - [ ] bedrock generator
+    - [ ] sagemaker (fine-tuned) generator
+    - [ ] azure generator
+- [ ] postprocessing:
+    - [ ] validation
+    - [ ] repair prompt
+
 ## environment
 
 ### setup from files
