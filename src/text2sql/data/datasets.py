@@ -5,21 +5,29 @@ from text2sql.data.sqlite_functions import  get_sqlite_database_file, query_sqli
 from text2sql.data.schema_to_text import schema_to_basic_format, schema_to_sql_create, schema_to_datagrip_format
 
 
-def list_supported_databases(dataset_base_path: str, dataset: str) -> list[str]:
+def list_supported_databases(dataset_base_path: str) -> list[str]:
     """find all sqlite databases in the dataset directory and return their names"""
     # handle nested or flat structure
-    flat = [os.path.basename(p) for p in glob.glob(os.path.join(dataset_base_path, dataset, "*.sqlite"))]
-    nested = [os.path.basename(p) for p in glob.glob(os.path.join(dataset_base_path, dataset, "**/*.sqlite"))]
+    flat = [os.path.basename(p) for p in glob.glob(os.path.join(dataset_base_path, "*.sqlite"))]
+    nested = [os.path.basename(p) for p in glob.glob(os.path.join(dataset_base_path, "**/*.sqlite"))]
     found_files = sorted(list(set(flat + nested)))
     database_names = [x.rsplit(".", 1)[0] for x in found_files]
     return database_names
 
 
 class SqliteDataset:
-    def __init__(self, base_data_path: str, dataset_name: str):
+    def __init__(self, base_data_path: str):
+        """initialize an sql dataset manager
+        
+        list, describe and query sqlite databases from sqlite based datasets.  
+        the base path should be the main directory of the databases,  
+        e.g. for BIRD, "<my_path_to>/bird/train/train_databases"
+
+        Args:
+            base_data_path (str): the base path of the dataset containing the databases
+        """
         self.base_data_path = base_data_path
-        self.dataset_name = dataset_name
-        self.databases = list_supported_databases(base_data_path, dataset_name)
+        self.databases = list_supported_databases(base_data_path)
         self.supported_modes = ["basic", "basic_types", "basic_relations", "basic_types_relations", "sql", "datagrip"]
 
     def get_databases(self) -> list[str]:
@@ -33,12 +41,12 @@ class SqliteDataset:
     def get_database_path(self, database_name: str) -> str:
         """return the path to the sqlite database file"""
         if database_name not in self.databases:
-            raise ValueError(f"Database '{database_name}' not found in dataset '{self.dataset_name}'")
-        return get_sqlite_database_file(self.base_data_path, self.dataset_name, database_name)
+            raise ValueError(f"Database '{database_name}' not found in '{self.base_data_path}'")
+        return get_sqlite_database_file(self.base_data_path, database_name)
     
     def get_database_schema(self, database_name: str) -> dict:
         """return a dict of the database schema"""
-        return get_sqlite_schema(self.base_data_path, self.dataset_name, database_name)
+        return get_sqlite_schema(self.base_data_path, database_name)
     
     def describe_database_schema(self, database_name: str, mode: str="basic") -> str:
         """return a string representation of the database schema"""
@@ -63,4 +71,4 @@ class SqliteDataset:
         
     def query_database(self, database_name: str, query: str) -> list[dict]:
         """return the results of the query as a list of dictionaries"""
-        return query_sqlite_database(self.base_data_path, self.dataset_name, database_name, query)
+        return query_sqlite_database(self.base_data_path, database_name, query)
