@@ -6,6 +6,8 @@ module-based code for running text2sql tests
 
 - [x] data access:
     - [x] sqlite data loader
+    - [ ] (*later*) mysql data connector
+    - [ ] (*later*) mysql data connector
 - [ ] preprocessors:
     - [ ] pinterest style query summarizer
     - [ ] pinterest style table summarizer
@@ -23,19 +25,26 @@ module-based code for running text2sql tests
     - [x] sqlite formatter
     - [ ] (*later*) mysql formatter
     - [ ] (*later*) postgres formatter
-- [ ] generation:
+- [ ] prompt formatter:
     - [ ] alpaca in-context learning logic (like DAIL-SQL)
     - [ ] few-shot message logic (like Dubo-SQL)
-    - [ ] bedrock generator
-    - [ ] sagemaker (fine-tuned) generator
+- [ ] generation:
     - [ ] azure generator
+    - [ ] bedrock generator
+    - [ ] (*later*) sagemaker (fine-tuned) generator
+    - [ ] (*later*) pandas style inference mode (*Before Generation, Align it!*)
 - [ ] postprocessing:
     - [ ] validation
     - [ ] repair prompt
+- [ ] inference
+    - [ ] experiment config parser and runner
+    = [ ] pre-SQL-generator (*Before Generation, Align it!*)
 
 ## development questions
 
-- should we use `pydantic` schema for outputs? e.g. retrieval outputs
+- should we use `pydantic` schema for outputs? e.g. retrieval outputs?
+- how to version, format prompts?
+- want to support completion-like as well as conversation LLM APIs?
 
 ## environment
 
@@ -102,6 +111,7 @@ AZURE_OPENAI_API_KEY="<see azure openai dashboard for key>"
 AZURE_OPENAI_API_ENDPOINT="https://gena-gpt-2.openai.azure.com/"
 AZURE_OPENAI_API_VERSION="2024-06-01"
 AZURE_OPENAI_MODEL="gena-text-embedding-3-small"
+AZURE_OPENAI_GEN_MODEL="gena-4o"
 
 AWS_ACCESS_KEY_ID="<your aws access key>"
 AWS_SECRET_ACCESS_KEY="<your aws secret key>"

@@ -55,6 +55,7 @@ class AzureEmbedder(BaseEmbedder):
         model: str,
         batch_size: int = 8,
         max_chars: int = 1024,
+        **kwargs,
     ):
         """embed texts using Azure OpenAI API
 
@@ -65,6 +66,7 @@ class AzureEmbedder(BaseEmbedder):
             model (str): azure model deployment name
             batch_size (int, optional): batch size. Defaults to 8.
             max_chars (int, optional): max chars. Defaults to 1024.
+            kwargs: additional azure client specific arguments
         """
         self.api_key = api_key
         self.api_version = api_version
@@ -76,6 +78,7 @@ class AzureEmbedder(BaseEmbedder):
             api_key=self.api_key,
             api_version=self.api_version,
             azure_endpoint=self.azure_endpoint,
+            **kwargs,
         )
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))

@@ -8,7 +8,7 @@ def schema_to_basic_format(
 
     this supports optional inclusion of column types and relations
     """
-    output = [f"{database_name} tables:"]
+    output = []
 
     for table_name, table_info in schema["tables"].items():
         columns = []
@@ -19,7 +19,7 @@ def schema_to_basic_format(
             else:
                 columns.append(col_name)
 
-        table_line = f"{table_name} ( {' , '.join(columns)} )"
+        table_line = f"table '{table_name}' with columns: {' , '.join(columns)}"
         output.append(table_line)
 
     if include_relations:
