@@ -88,3 +88,9 @@ if you installed packages, you should update the requirements:
 
 [From conda create requirements.txt for pip3](https://stackoverflow.com/questions/50777849/from-conda-create-requirements-txt-for-pip3)  
 [How to update an existing Conda environment with a .yml file](https://stackoverflow.com/questions/42352841/how-to-update-an-existing-conda-environment-with-a-yml-file)
+
+## how to use
+
+final experiment script pending completion of all modules
+
+to see how to use individual models, for now, check the notebooks
