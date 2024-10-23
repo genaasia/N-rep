@@ -47,6 +47,18 @@ module-based code for running text2sql tests
 - how to version, format prompts?
 - want to support completion-like as well as conversation LLM APIs?
 
+## development notes
+
+use `git flow` process *and* tool for preparing releases (merging dev to main)!
+
+1. create feature branches from `dev` with name `feature/<description>`
+2. merge branches back into `dev` via Github Pull Request (use notion ticket tag in title! "[GHT-XXX] my pr title")
+3. for preparing numbered releases, use `git-flow` and merge from `dev` to `main` via `release/x.x.x` branch
+4. before `finish` ing the release, bump the `version.py` number!
+5. use the `git push origin --tags` to update the version info on GitHub!
+
+see the `git-flow` [cheatsheet](http://danielkummer.github.io/git-flow-cheatsheet/) for help.
+
 ## environment
 
 ### start dependencies
