@@ -4,6 +4,8 @@ module-based code for running text2sql tests
 
 ## development progress
 
+- [ ] data access:
+    - [ ] sqlite data loader
 - [ ] preprocessors:
     - [ ] pinterest style query summarizer
     - [ ] pinterest style table summarizer
@@ -11,17 +13,19 @@ module-based code for running text2sql tests
     - [x] azure embedder
     - [x] bedrock cohere embedder
     - [x] bedrock titan v2 embedder
+    - [x] `sentence-transformers` embedder
     - [ ] (*later*) cohere embedder
     - [ ] (*later*) azure async embedder
-- [ ] retrieval:
-    - [ ] local retriever
-    - [ ] weaviate retiever
+- [x] retrieval:
+    - [x] local retriever
+    - [x] weaviate retiever
 - [ ] schema formatter:
     - [ ] sqlite formatter
     - [ ] mysql formatter
     - [ ] postgres formatter
 - [ ] generation:
-    - [ ] few-shot logic (following DAIL-SQL)
+    - [ ] alpaca in-context learning logic (like DAIL-SQL)
+    - [ ] few-shot message logic (like Dubo-SQL)
     - [ ] bedrock generator
     - [ ] sagemaker (fine-tuned) generator
     - [ ] azure generator
@@ -29,7 +33,17 @@ module-based code for running text2sql tests
     - [ ] validation
     - [ ] repair prompt
 
+## development questions
+
+- should we use `pydantic` schema for outputs? e.g. retrieval outputs
+
 ## environment
+
+### start dependencies
+
+for weaviate retrieval, you need a running instance of weaviate.
+
+see the 
 
 ### setup from files
 
