@@ -26,11 +26,12 @@ module-based code for running text2sql tests
     - [ ] (*later*) mysql formatter
     - [ ] (*later*) postgres formatter
 - [ ] prompt formatter:
+    - [x] basic few-shot conversation formatter
     - [ ] alpaca in-context learning logic (like DAIL-SQL)
     - [ ] few-shot message logic (like Dubo-SQL)
 - [ ] generation:
-    - [ ] azure generator
-    - [ ] bedrock generator
+    - [x] azure generator
+    - [x] bedrock generator
     - [ ] (*later*) sagemaker (fine-tuned) generator
     - [ ] (*later*) pandas style inference mode (*Before Generation, Align it!*)
 - [ ] postprocessing:
