@@ -4,8 +4,8 @@ module-based code for running text2sql tests
 
 ## development progress
 
-- [ ] data access:
-    - [ ] sqlite data loader
+- [x] data access:
+    - [x] sqlite data loader
 - [ ] preprocessors:
     - [ ] pinterest style query summarizer
     - [ ] pinterest style table summarizer
@@ -19,10 +19,10 @@ module-based code for running text2sql tests
 - [x] retrieval:
     - [x] local retriever
     - [x] weaviate retiever
-- [ ] schema formatter:
-    - [ ] sqlite formatter
-    - [ ] mysql formatter
-    - [ ] postgres formatter
+- [x] schema formatter:
+    - [x] sqlite formatter
+    - [ ] (*later*) mysql formatter
+    - [ ] (*later*) postgres formatter
 - [ ] generation:
     - [ ] alpaca in-context learning logic (like DAIL-SQL)
     - [ ] few-shot message logic (like Dubo-SQL)
@@ -93,4 +93,16 @@ if you installed packages, you should update the requirements:
 
 final experiment script pending completion of all modules
 
-to see how to use individual models, for now, check the notebooks
+to see how to use individual models, for now, check the notebooks.
+
+you will need an `.env` file like below:
+
+```
+AZURE_OPENAI_API_KEY="<see azure openai dashboard for key>"
+AZURE_OPENAI_API_ENDPOINT="https://gena-gpt-2.openai.azure.com/"
+AZURE_OPENAI_API_VERSION="2024-06-01"
+AZURE_OPENAI_MODEL="gena-text-embedding-3-small"
+
+AWS_ACCESS_KEY_ID="<your aws access key>"
+AWS_SECRET_ACCESS_KEY="<your aws secret key>"
+```
