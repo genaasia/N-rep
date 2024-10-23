@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 
-import cohere
 import json
 import tqdm
 
 from loguru import logger
 from openai import AzureOpenAI
+from sentence_transformers import SentenceTransformer
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from text2sql.engine.clients import get_azure_client, get_bedrock_client, get_cohere_client
@@ -18,9 +18,11 @@ class BaseEmbedder(ABC):
 
     @abstractmethod
     def _embed_batch(self, batch_samples: list[str]) -> list[list[float]]:
+        """batch embedding function for specific client"""
         pass
 
-    def embed(self, samples: list[str], verbose: bool = False) -> list[list[float]]:
+    def embed_list(self, samples: list[str], verbose: bool = False) -> list[list[float]]:
+        """embed a list of texts, with optional progress bar"""
         embeddings: list[list[float]] = []
         iter_list = range(0, len(samples), self.batch_size)
         if verbose:
@@ -30,6 +32,17 @@ class BaseEmbedder(ABC):
             batch_embeddings = self._embed_batch(batch_inputs)
             embeddings.extend(batch_embeddings)
         return embeddings
+
+    def embed_text(self, text: str) -> list[float]:
+        """embed a single text"""
+        return self._embed_batch([text])[0]
+
+    def embed(self, data: str | list[str], verbose: bool = False) -> list[float] | list[list[float]]:
+        """lazy function to embed either a single text or a list of texts"""
+        if type(data) == str:
+            return self.embed_text(data)
+        else:
+            return self.embed_list(data, verbose=verbose)
 
 
 class AzureEmbedder(BaseEmbedder):
@@ -76,7 +89,6 @@ class AzureEmbedder(BaseEmbedder):
 
 
 class BedrockCohereEmbedder(BaseEmbedder):
-    """embed texts using Cohere embeddings on Amazon Bedrock API"""
 
     def __init__(
         self,
@@ -88,7 +100,7 @@ class BedrockCohereEmbedder(BaseEmbedder):
         batch_size: int = 8,
         max_chars: int = 1024,
     ):
-        """embed texts using Amazon Bedrock API
+        """embed texts using Cohere embeddings on Amazon Bedrock API
 
         Args:
             region_name (str): aws region name
@@ -134,7 +146,6 @@ class BedrockCohereEmbedder(BaseEmbedder):
 
 
 class BedrockTitanv2Embedder(BaseEmbedder):
-    """embed texts using Titan v2 embeddings on Amazon Bedrock API"""
 
     def __init__(
         self,
@@ -147,7 +158,7 @@ class BedrockTitanv2Embedder(BaseEmbedder):
         batch_size: int = 1,
         max_chars: int = 1024,
     ):
-        """embed texts using Amazon Bedrock API
+        """embed texts using Titan v2 embeddings on Amazon Bedrock API
 
         Args:
             region_name (str): aws region name
@@ -199,3 +210,46 @@ class BedrockTitanv2Embedder(BaseEmbedder):
         response_body = json.loads(response.get("body").read())
         embedding: list = response_body.get("embedding")
         return [embedding]
+
+
+class SentenceTransformerEmbedder(BaseEmbedder):
+
+    def __init__(
+        self,
+        model_path: str,
+        cache_dir: str | None = None,
+        batch_size: int = 1,
+        max_chars: int = 1024,
+    ):
+        """embed texts using sentence-transformers
+
+        Args:
+            model_path (str): path to sentence-transformers model (local or huggingface hub)
+            cache_dir (str, optional): cache directory for model. Defaults to None.
+            batch_size (int, optional): batch size. Defaults to 1.
+            max_chars (int, optional): max chars. Defaults to 1024.
+        """
+        if batch_size != 1:
+            logger.warning("batch_size is set to 1 for Titan v2 embeddings")
+            batch_size = 1
+        self.model_path = model_path
+        self.cache_dir = cache_dir
+        self.batch_size = batch_size
+        self.max_chars = max_chars
+        self.model = self._initialize_model(
+            model_path=self.model_path,
+            cache_dir=self.cache_dir,
+        )
+
+    def _initialize_model(self, model_path: str, cache_dir: str | None) -> SentenceTransformer:
+        """initialize SentenceTransformer model"""
+        if cache_dir:
+            model = SentenceTransformer(model_path, cache_folder=cache_dir)
+        else:
+            model = SentenceTransformer(model_path)
+        return model
+
+    def _embed_batch(self, batch_samples: list[str]) -> list[list[float]]:
+        """embed one batch of texts"""
+        embeddings = self.model.encode(batch_samples)
+        return embeddings

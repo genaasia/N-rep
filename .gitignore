@@ -212,4 +212,4 @@ terraform.rc
 **/.pytest_cache
 **/__pycache__
 
-**/.npy
+**.npy
