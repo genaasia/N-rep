@@ -4,8 +4,8 @@ def convert_messages_to_bedrock_format(model: str, messages: list[dict]) -> tupl
     system_content: str = messages[0]["content"]
     system_message: list[dict] = [{"text": system_content}]
     messages = messages[1:]
-    # mistral models do not use system prompt
-    if model.startswith("mistral"):
+    # mistral, titan models do not use system prompt
+    if model.startswith("mistral") or model.startswith("amazon"):
         messages[0]["content"] = system_content + messages[0]["content"]
         system_message = None
     # convert into bedrock format with content value as dict with key text
