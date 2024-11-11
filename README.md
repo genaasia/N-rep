@@ -40,7 +40,7 @@ module-based code for running text2sql tests
     - [ ] repair prompt
 - [ ] inference
     - [ ] experiment config parser and runner
-    = [ ] pre-SQL-generator (*Before Generation, Align it!*)
+    - [ ] pre-SQL-generator (*Before Generation, Align it!*)
 
 ## development questions
 
@@ -68,7 +68,7 @@ see the `git-flow` [cheatsheet](http://danielkummer.github.io/git-flow-cheatshee
 
 for weaviate retrieval, you need a running instance of weaviate.
 
-see the 
+(*todo*) see docker compose file for details.
 
 ### setup from files
 
