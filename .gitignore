@@ -211,5 +211,9 @@ terraform.rc
 **/.ipynb_checkpoints
 **/.pytest_cache
 **/__pycache__
+notebooks_local/*
 
 **.npy
+**.tsv
+**.csv
+**.sql
