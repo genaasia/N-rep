@@ -1,9 +1,21 @@
-# create databases for testing
+# databases compose files
+
+compose files for weaviate, mysql and postgres
+
+all commands in format for `docker compose` version 20+
+
+# weaviate
+
+start weaviate with `docker compose -f docker-compose-weaviate.yaml up -d`
+
+stop with `docker compose -f docker-compose-weaviate.yaml down`. add `--volumes` to delete volume too (THIS REMOVES ALL INSERTED DATA!)
+
+# postgres and mysql databases for testing
 
 ## issues
 
 - mysql dbs only accessible with `root` user, even though non-root user is created from environment vars
-- not really an "issue" but the postgres db is named after the USER
+- not really an "issue" but the postgres db is named after the *user* in the `sql` file by default
 
 ## prep db sql files
 
@@ -83,3 +95,7 @@ postgres ready logs:
 2024-11-11 09:12:50.269 UTC [59] LOG:  database system was shut down at 2024-11-11 09:12:50 UTC
 2024-11-11 09:12:50.274 UTC [1] LOG:  database system is ready to accept connections
 ```
+
+### stopping
+
+stop with `docker compose down`. add `--volumes` to delete volume too (THIS REMOVES ALL INSERTED DATA!)
