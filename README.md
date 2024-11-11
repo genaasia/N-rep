@@ -41,6 +41,9 @@ module-based code for running text2sql tests
 - [ ] inference
     - [ ] experiment config parser and runner
     - [ ] pre-SQL-generator (*Before Generation, Align it!*)
+- [ ] evaluation
+    - [x] port evaluation code from gena-ai
+    - [ ] `Evaluator` class
 
 ## development questions
 
@@ -66,7 +69,7 @@ see the `git-flow` [cheatsheet](http://danielkummer.github.io/git-flow-cheatshee
 
 ### start dependencies
 
-for weaviate retrieval, you need a running instance of weaviate.
+for weaviate `Retriever`, you need a running instance of weaviate.
 
 (*todo*) see docker compose file for details.
 
