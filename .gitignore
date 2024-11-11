@@ -216,3 +216,4 @@ notebooks_local/*
 **.npy
 **.tsv
 **.csv
+**.sql
