@@ -6,8 +6,8 @@ module-based code for running text2sql tests
 
 - [x] data access:
     - [x] sqlite data loader
-    - [ ] (*later*) mysql data connector
-    - [ ] (*later*) mysql data connector
+    - [x] mysql data connector
+    - [x] mysql data connector
 - [ ] preprocessors:
     - [ ] pinterest style query summarizer
     - [ ] pinterest style table summarizer
@@ -23,10 +23,11 @@ module-based code for running text2sql tests
     - [x] weaviate retiever
 - [x] schema formatter:
     - [x] sqlite formatter
-    - [ ] (*later*) mysql formatter
-    - [ ] (*later*) postgres formatter
+    - [x] mysql formatter
+    - [x] postgres formatter
 - [ ] prompt formatter:
     - [x] basic few-shot conversation formatter
+    - [x] sql markdown code block formatter
     - [ ] alpaca in-context learning logic (like DAIL-SQL)
     - [ ] few-shot message logic (like Dubo-SQL)
 - [ ] generation:
