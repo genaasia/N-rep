@@ -75,7 +75,7 @@ def weaviate_properties_from_dict(data_sample: dict) -> list[Property]:
         elif isinstance(value, float):
             prop_dtype = DataType.NUMBER
         elif isinstance(value, bool):
-            prop_dtype = DataType.BOOLEAN
+            prop_dtype = DataType.BOOL
         elif isinstance(value, dict):
             prop_dtype = DataType.OBJECT
         elif isinstance(value, list):

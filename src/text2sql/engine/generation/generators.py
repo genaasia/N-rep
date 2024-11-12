@@ -1,6 +1,8 @@
-from abc import ABC, abstractmethod
-
 import json
+
+from abc import ABC, abstractmethod
+from typing import Callable
+
 import tqdm
 
 from openai import AzureOpenAI
@@ -8,6 +10,10 @@ from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from text2sql.engine.clients import get_azure_client, get_bedrock_client
 from text2sql.engine.generation.converters import convert_messages_to_bedrock_format
+
+
+def identity(x: str) -> str:
+    return x
 
 
 class AzureGenerator:
@@ -18,6 +24,7 @@ class AzureGenerator:
         api_version: str,
         azure_endpoint: str,
         model: str,
+        post_func: Callable[[str], str] = identity,
         **kwargs,
     ):
         """generate text using Azure OpenAI API
@@ -34,6 +41,7 @@ class AzureGenerator:
         self.api_version = api_version
         self.azure_endpoint = azure_endpoint
         self.model = model
+        self.post_func = post_func  
         self.client: AzureOpenAI = get_azure_client(
             api_key=self.api_key,
             api_version=self.api_version,
@@ -45,7 +53,7 @@ class AzureGenerator:
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
         """embed one batch of texts with azure"""
         chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
-        return chat_completion.choices[0].message.content
+        return self.post_func(chat_completion.choices[0].message.content)
 
 
 
@@ -54,6 +62,7 @@ class BedrockGenerator:
         self,
         region_name: str,
         model: str,
+        post_func: Callable[[str], str] = identity,
         **kwargs,
     ):
         """generate text using Bedrock API
@@ -65,6 +74,7 @@ class BedrockGenerator:
         """
         self.region_name = region_name
         self.model = model
+        self.post_func = post_func  
         self.client = get_bedrock_client(region_name=self.region_name, **kwargs)
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
@@ -83,5 +93,5 @@ class BedrockGenerator:
                 messages=formatted_messages,
                 **kwargs,
             )
-        return response["output"]["message"]["content"][0]["text"]
+        return self.post_func(response["output"]["message"]["content"][0]["text"])
         
