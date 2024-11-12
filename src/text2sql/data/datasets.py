@@ -1,7 +1,10 @@
 import glob
 import os
 
+from abc import ABC, abstractmethod
+
 import sqlalchemy
+
 from sqlalchemy import create_engine, inspect, text
 
 from text2sql.data.sqlite_functions import  get_sqlite_database_file, query_sqlite_database, get_sqlite_schema
@@ -19,7 +22,41 @@ def list_supported_databases(dataset_base_path: str) -> list[str]:
     return database_names
 
 
-class MysqlDataset:
+class BaseDataset(ABC):
+    @abstractmethod
+    def get_databases(self) -> list[str]:
+        pass
+    
+    @abstractmethod
+    def get_schema_description_modes(self) -> list[str]:
+        pass
+    
+    @abstractmethod
+    def get_database_schema(self, database_name: str) -> dict:
+        pass
+    
+    @abstractmethod
+    def describe_database_schema(self, database_name: str, mode: str="basic") -> str:
+        pass
+    
+    @abstractmethod
+    def query_database(self, database_name: str, query: str) -> list[dict]:
+        pass
+
+    def validate_query(self, database_name: str, query: str) -> dict:
+        """validate the query against the database schema"""
+        try:
+            result: list[dict] = self.query_database(database_name, query)
+            success: bool = True
+            message: str = "ok"
+        except Exception as e:
+            result: list[dict] = []
+            success: bool = False
+            message: str = f"error - {type(e).__name__}: {str(e)}"
+        return {"validated": success, "message": message, "execution_result": result}
+
+
+class MysqlDataset(BaseDataset):
     def __init__(self, host: str, port: int, user: str, password: str):
         """initialize a mysql dataset manager"""
         self.host = host
@@ -86,7 +123,7 @@ class MysqlDataset:
         return [dict(r._mapping) for r in result]
     
 
-class PostgresDataset:
+class PostgresDataset(BaseDataset):
     def __init__(self, host: str, port: int, user: str, password: str):
         """initialize a postgres dataset manager"""
         self.host = host
@@ -151,7 +188,7 @@ class PostgresDataset:
         return [dict(r._mapping) for r in result]
     
 
-class SqliteDataset:
+class SqliteDataset(BaseDataset):
     def __init__(self, base_data_path: str):
         """initialize an sql dataset manager
         
@@ -208,7 +245,7 @@ class SqliteDataset:
     def query_database(self, database_name: str, query: str) -> list[dict]:
         """return the results of the query as a list of dictionaries"""
         return query_sqlite_database(self.base_data_path, database_name, query)
-    
+
 
 class SqliteDataset:
     def __init__(self, base_data_path: str):
