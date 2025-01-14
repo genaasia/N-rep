@@ -1,5 +1,5 @@
 import re
-
+import json
 
 def extract_first_code_block(text: str) -> str:
     """extract code block contents"""
@@ -12,3 +12,9 @@ def extract_first_code_block(text: str) -> str:
     if len(results) == 0:
         return None
     return results[0]
+
+
+def extract_sql_from_json(text: str) -> str:
+    text = text.replace("```json", "").replace("```", "")
+    text = json.loads(text)
+    return text.get("sql", text.get("SQL"))

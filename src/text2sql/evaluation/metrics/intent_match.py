@@ -1,9 +1,22 @@
 import decimal
-
+from datetime import datetime
 from .match_utils import get_match_for_valid_exec
 
 
-def get_intent_match(actual, expected):
+def parse_date_string(date_string):
+    formats = [
+        "%Y-%m",           # for "2023-10"
+        "%Y-%m-%d",        # for "2023-10-01"
+        "%Y-%m-%dT%H:%M:%S"  # for "2023-10-01T00:00:00"
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_string, fmt)
+        except ValueError:
+            continue
+    return date_string
+
+def get_intent_match(actual, expected, normalize_dates=False):
     # Function to remove leading and trailing quotes
     def remove_quotes(string):
         if isinstance(string, str):
@@ -26,6 +39,11 @@ def get_intent_match(actual, expected):
         """
         This function compares expected_val and actual_val with relevant datatype conversion
         """
+        if normalize_dates and isinstance(expected_val, str):
+            expected_val = parse_date_string(expected_val)
+        if normalize_dates and isinstance(actual_val, str):
+            actual_val = parse_date_string(actual_val)
+
         if (expected_val is None or expected_val == 0) and (actual_val is None or actual_val == 0):
             return True
         elif isinstance(expected_val, (int, float, decimal.Decimal)) and isinstance(

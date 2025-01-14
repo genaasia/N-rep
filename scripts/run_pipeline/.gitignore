@@ -1,0 +1,9 @@
+outputs/
+plots/
+results/
+logs/
+data/
+
+.env
+
+notes.txt

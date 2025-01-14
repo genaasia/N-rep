@@ -9,6 +9,15 @@ from text2sql.engine.prompts.constants import (
     FEWSHOT_ASSISTANT_TEMPLATE,
 )
 
+from text2sql.engine.prompts.constants_v2 import (
+    CHESS_COT_PROMPT,
+    ESQL_COT_PROMPT,
+    ESQL_QE_PROMPT,
+    GENA_COT_PROMPT,
+    GENA_COT_PROMPT_ZERO,
+    GENA_COT_USER_PROMPT
+)
+
 
 class BasePromptFormatter(ABC):
 
@@ -109,5 +118,107 @@ class LegacyFewShotPromptFormatter(BasePromptFormatter):
             messages.append({"role": "assistant", "content": output_message})
         # add date to the target query (for relative dates)
         query_message = self.format_user_message(query, self.database_type, add_date=True)
+        messages.append({"role": "user", "content": query_message})
+        return messages
+
+class ChessCoTPromptFormatter(BasePromptFormatter):
+    def __init__(
+            self,
+            database_type: str,
+        ):
+            self.database_type = database_type
+
+    def format_user_message(self, schema_description: str, question: str) -> str:
+        """format a single message"""
+        return CHESS_COT_PROMPT.format(schema_description=schema_description, question=question)
+
+    def generate_messages(
+            self, 
+            schema_description: str, 
+            query: str, 
+        ) -> list[dict]:
+        messages = []
+        query_message = self.format_user_message(schema_description, query)
+        messages.append({"role": "user", "content": query_message})
+        return messages
+
+class ESQLCoTPromptFormatter(BasePromptFormatter):
+    def __init__(
+            self,
+            database_type: str,
+        ):
+            self.database_type = database_type
+
+    def format_user_message(self, schema_description: str, question: str) -> str:
+        """format a single message"""
+        return ESQL_COT_PROMPT.format(schema_description=schema_description, question=question)
+
+    def generate_messages(
+            self, 
+            schema_description: str, 
+            query: str, 
+        ) -> list[dict]:
+        messages = []
+        query_message = self.format_user_message(schema_description, query)
+        messages.append({"role": "user", "content": query_message})
+        return messages
+
+class ESQLQEPromptFormatter(BasePromptFormatter):
+    def __init__(
+            self,
+            database_type: str,
+        ):
+            self.database_type = database_type
+
+    def format_user_message(self, schema_description: str, question: str) -> str:
+        """format a single message"""
+        return ESQL_QE_PROMPT.format(schema_description=schema_description, question=question)
+
+    def generate_messages(
+            self, 
+            schema_description: str, 
+            query: str, 
+        ) -> list[dict]:
+        messages = []
+        query_message = self.format_user_message(schema_description, query)
+        messages.append({"role": "user", "content": query_message})
+        return messages
+
+
+class GenaCoTPromptFormatter(BasePromptFormatter):
+    def format_user_message(self, user_message) -> str:
+        """format a single message"""
+        return GENA_COT_USER_PROMPT.format(user_message=user_message)
+
+    def generate_messages(
+            self, 
+            schema_description: str, 
+            query: str, 
+        ) -> list[dict]:
+
+        # if system message is provided, use it and add schema description
+        formatted_system_message = GENA_COT_PROMPT.format(schema_description=schema_description)
+        messages = [{"role": "system", "content": formatted_system_message}]
+
+        query_message = self.format_user_message(query)
+        messages.append({"role": "user", "content": query_message})
+        return messages
+
+class GenaCoTZsPromptFormatter(BasePromptFormatter):
+    def format_user_message(self, user_message) -> str:
+        """format a single message"""
+        return GENA_COT_USER_PROMPT.format(user_message=user_message)
+
+    def generate_messages(
+            self, 
+            schema_description: str, 
+            query: str, 
+        ) -> list[dict]:
+
+        # if system message is provided, use it and add schema description
+        formatted_system_message = GENA_COT_PROMPT_ZERO.format(schema_description=schema_description)
+        messages = [{"role": "system", "content": formatted_system_message}]
+
+        query_message = self.format_user_message(query)
         messages.append({"role": "user", "content": query_message})
         return messages
