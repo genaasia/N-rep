@@ -46,8 +46,6 @@ def get_formatter(formatter_name):
         formatter = ESQLCoTPromptFormatter(database_type="postgres")
     elif formatter_name == "GENACoT":
         formatter = GenaCoTPromptFormatter()
-    elif formatter_name == "GENACoTZs":
-        formatter = GenaCoTZsPromptFormatter()
     else:
         raise Exception(f"No known formatter with the name {formatter_name}")
     return formatter
