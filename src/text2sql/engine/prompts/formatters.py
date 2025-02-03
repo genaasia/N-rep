@@ -194,11 +194,19 @@ class GenaCoTPromptFormatter(BasePromptFormatter):
             self, 
             schema_description: str, 
             query: str, 
+            few_shot_examples: list[dict] = [],
         ) -> list[dict]:
 
         # if system message is provided, use it and add schema description
         formatted_system_message = GENA_COT_PROMPT.format(schema_description=schema_description)
         messages = [{"role": "system", "content": formatted_system_message}]
+
+        for example in few_shot_examples:
+            example_query = example["data"]["nl_en_query"]
+            example_sql = example["data"]["sql_query"]
+            messages.append({"role": "user", "content": f"text query: {example_query}"})
+            output = f"```sql\n{example_sql}\n```"
+            messages.append({"role": "assistant", "content": output})
 
         query_message = self.format_user_message(query)
         messages.append({"role": "user", "content": query_message})

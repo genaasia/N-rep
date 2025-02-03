@@ -121,10 +121,19 @@ class GCPGenerator:
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
         system_instruction = "\n".join([message["content"] for message in messages if message["role"] == "system"])
-        user_messages = "\n".join([message["content"] for message in messages if message["role"] == "user"])
         if system_instruction:
             client = genai.GenerativeModel(self.model, system_instruction=system_instruction, generation_config=kwargs)
         else:
             client = genai.GenerativeModel(self.model, generation_config=kwargs)
-        result = client.generate_content(user_messages)
+        history = []
+        for message in messages[:-1]:
+            if message["role"] in ["assistant", "user"]:
+                if "content" not in message:
+                    print(f"{message=}")
+                new_message = {"role" : message["role"], "parts": message["content"]}
+                history.append(new_message)
+
+        chat = client.start_chat(history=history)
+
+        result = chat.send_message(messages[-1]["content"])
         return self.post_func(result.text)

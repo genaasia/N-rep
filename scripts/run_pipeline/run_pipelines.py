@@ -213,7 +213,7 @@ def main():
     # CONFIGURE LOGGER
     formatted_date = datetime.now().strftime("%Y-%m-%d--%H-%M-%S")
     log_file = f"{formatted_date}.log"
-    logs_folder = settings.log_folder  ## CONFIG
+    logs_folder = settings.log_folder
     logs_file_path = os.path.join(logs_folder, log_file)
     if not os.path.exists(logs_folder):
         os.mkdir(logs_folder)
@@ -237,8 +237,7 @@ def main():
             host=os.environ.get("WEAVIATE_HOST"), 
             port=os.environ.get("WEAVIATE_PORT"), 
             grpc_port=os.environ.get("WEAVIATE_GRPC_PORT"), 
-            collection_name="Synthetic_collection_fixed_for_real_valids" # bu configden
-            # collection_name="Tmp_collection_1"
+            collection_name=settings.collection_name
         )
     embedder = BedrockCohereEmbedder(
             region_name="us-east-1",
@@ -247,7 +246,7 @@ def main():
             batch_size=8,
         )
 
-    if args.update_embeddings:
+    if args.update_embeddings and args.run_inference:
         packative_train_data = pd.read_csv(settings.train_file_path).to_dict(orient="records")
         # packative_train_data = [datum for datum in packative_train_data if datum["validated"]]
         
@@ -266,7 +265,6 @@ def main():
                 data=packative_train_data,
             )
 
-    output_file_as_input = None
     score_cache = {}
     if args.run_inference:
         packative_test_data = pd.read_csv(settings.test_file_path).to_dict(
@@ -318,7 +316,7 @@ def main():
         inference_file_name = os.path.splitext(os.path.basename(args.inference_file))[0]
         file_name = f"{inference_file_name}_{formatted_date}.json"
         logger.debug(
-            f"Will run evaluation only without inference using predictions from this file: {output_file_as_input} !!!!"
+            f"Will run evaluation only without inference using predictions from this file: {inference_file_name} !!!!"
         )
         with open(args.inference_file, "r") as f:
             test_results = json.load(f)

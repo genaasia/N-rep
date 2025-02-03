@@ -5,8 +5,7 @@ from text2sql.engine.generation import (AzureGenerator, BedrockGenerator,
                                         GCPGenerator)
 from text2sql.engine.generation.postprocessing import (
     extract_first_code_block, extract_sql_from_json)
-from text2sql.engine.prompts import (ChessCoTPromptFormatter,
-                                     ESQLCoTPromptFormatter,
+from text2sql.engine.prompts import (ESQLCoTPromptFormatter,
                                      GenaCoTPromptFormatter,
                                      GenaCoTZsPromptFormatter,
                                      LegacyFewShotPromptFormatter)
@@ -26,6 +25,12 @@ def get_generator(generator_name, model, post_func):
         logger.debug(f"using '{model}'")
         generator = GCPGenerator(
             api_key=os.environ.get("GCP_API_KEY"),
+            model=model,
+            post_func=post_func,
+        )
+    elif generator_name == "aws-bedrock":
+        generator = BedrockGenerator(
+            region_name="us-west-2",
             model=model,
             post_func=post_func,
         )
@@ -49,12 +54,9 @@ def get_formatter(formatter_name):
 
 
 def get_schema_description(schema_name, db_instance):
-    if schema_name == "basic":
-        schema_description = db_instance.describe_database_schema(
-            os.environ.get("POSTGRES_DB"), mode="basic"
+    schema_description = db_instance.describe_database_schema(
+            os.environ.get("POSTGRES_DB"), mode=schema_name
         )
-    else:
-        raise Exception(f"No known schema with the name {schema_name}")
     return schema_description
 
 

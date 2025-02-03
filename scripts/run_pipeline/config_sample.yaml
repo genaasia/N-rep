@@ -3,9 +3,10 @@ outputs_folder : ./outputs_100_sc
 results_folder: ./results_100_sc
 plots_folder: ./plots_100_sc
 inference_folder: ./inference_100_sc
-train_file_path: ./data/packative_synthesized_data_20241108.csv
-train_embedding_file_path: ./data/packative_synthesized_data_20241108_nl_query_keymap_packative_synth_embeddings.npy
-test_file_path: ./data/packative_nl2sql_eval_fixed20241119_20241128_cleans.csv
+train_file_path: ./data/packative_nl2sql_train_en_20241114.csv
+train_embedding_file_path: ./data/packative_nl2sql_train_en_20241114_embedding.npy
+test_file_path: ./data/packative_nl2sql_eval_fixed20241119_20241128.csv
+collection_name: packative_collection_1
 batch_size: null
 max_workers: 4
 
@@ -21,7 +22,7 @@ pipe_configurations:
       top_k: 3
     candidate_count: 1
     pipe_name: pipe_v1
-  - formatter: GENACoT
+  - formatter: GENACoTZs
     schema: basic
     postfunc: extract_first_code_block
     generator:
@@ -32,7 +33,7 @@ pipe_configurations:
       top_k: 5
     candidate_count: 5
     pipe_name: pipe_v2
-  - formatter: GENACoT
+  - formatter: legacy
     schema: basic
     postfunc: extract_first_code_block
     generator:
