@@ -70,12 +70,12 @@ def weaviate_properties_from_dict(data_sample: dict) -> list[Property]:
             prop_dtype = DataType.TEXT
         elif isinstance(value, uuid.UUID):
             prop_dtype = DataType.UUID
+        elif isinstance(value, bool):
+            prop_dtype = DataType.BOOL
         elif isinstance(value, int):
             prop_dtype = DataType.INT
         elif isinstance(value, float):
             prop_dtype = DataType.NUMBER
-        elif isinstance(value, bool):
-            prop_dtype = DataType.BOOL
         elif isinstance(value, dict):
             prop_dtype = DataType.OBJECT
         elif isinstance(value, list):

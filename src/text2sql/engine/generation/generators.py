@@ -6,6 +6,7 @@ from typing import Callable
 import tqdm
 
 from openai import AzureOpenAI
+import google.generativeai as genai
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from text2sql.engine.clients import get_azure_client, get_bedrock_client
@@ -94,4 +95,45 @@ class BedrockGenerator:
                 **kwargs,
             )
         return self.post_func(response["output"]["message"]["content"][0]["text"])
-        
+
+    
+class GCPGenerator:
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        post_func: Callable[[str], str] = identity,
+    ):
+        """generate text using GCP API
+
+        Args:
+            api_key (str): gcp api key
+            model (str): gemini model name
+            kwargs: additional gemini specific arguments
+
+        """
+        self.model = model
+        self.post_func = post_func  
+
+        genai.configure(api_key=api_key)
+
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
+        system_instruction = "\n".join([message["content"] for message in messages if message["role"] == "system"])
+        if system_instruction:
+            client = genai.GenerativeModel(self.model, system_instruction=system_instruction, generation_config=kwargs)
+        else:
+            client = genai.GenerativeModel(self.model, generation_config=kwargs)
+        history = []
+        for message in messages[:-1]:
+            if message["role"] in ["assistant", "user"]:
+                if "content" not in message:
+                    print(f"{message=}")
+                new_message = {"role" : message["role"], "parts": message["content"]}
+                history.append(new_message)
+
+        chat = client.start_chat(history=history)
+
+        result = chat.send_message(messages[-1]["content"])
+        return self.post_func(result.text)

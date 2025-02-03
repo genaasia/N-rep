@@ -1,5 +1,8 @@
 import glob
 import os
+from uuid import UUID
+from decimal import Decimal
+from datetime import datetime, date, time, timedelta
 
 from abc import ABC, abstractmethod
 
@@ -54,6 +57,33 @@ class BaseDataset(ABC):
             success: bool = False
             message: str = f"error - {type(e).__name__}: {str(e)}"
         return {"validated": success, "message": message, "execution_result": result}
+
+    def normalize_db_query_results(self, data):
+        # Matches the pydantic JSON serialization
+        if isinstance(data, dict):
+            return {key: self.normalize_db_query_results(value) for key, value in data.items()}
+        elif isinstance(data, list):
+            return [self.normalize_db_query_results(item) for item in data]
+        elif isinstance(data, datetime):
+            if data.microsecond:
+                return data.strftime('%Y-%m-%dT%H:%M:%S.%f')
+            return data.strftime('%Y-%m-%dT%H:%M:%S')
+        elif isinstance(data, date):
+            return data.strftime('%Y-%m-%d')
+        elif isinstance(data, time):
+            return data.strftime('%H:%M:%S')
+        elif isinstance(data, timedelta):
+            years = data.days // 365
+            remaining_days = data.days % 365
+            duration = f'P{years}Y'
+            if remaining_days:
+                duration += f'{remaining_days}D'
+            return duration
+        elif isinstance(data, (UUID, Decimal)):
+            return str(data)
+        elif isinstance(data, bytes):
+            return data.hex()
+        return data
 
 
 class MysqlDataset(BaseDataset):

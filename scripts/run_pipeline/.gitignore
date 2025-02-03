@@ -1,0 +1,14 @@
+outputs*
+plots*
+results*
+inference*
+logs/
+data/
+experiments/
+old_experiments/
+
+.env
+
+config.yaml
+
+notes.txt
