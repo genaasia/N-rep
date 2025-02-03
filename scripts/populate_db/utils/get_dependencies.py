@@ -110,24 +110,19 @@ class DatabaseValuesExtractor:
             Set[Any]: Set of unique values from the column
         """
         # Check cache first
-        if (
-            table_name in self.cached_all_values
-        ):
+        if table_name in self.cached_all_values:
             return self.cached_all_values[table_name]
 
-
         # Query the database for column names
-        col_query = text(
-            f"SHOW COLUMNS FROM {table_name};"
-        )
+        col_query = text(f"SHOW COLUMNS FROM {table_name};")
+
         with self.get_connection() as conn:
             result = conn.execute(col_query)
             col_names = [row[0] for row in result]
 
         # Query the database for all values
-        query = text(
-            f"SELECT * FROM {table_name}"
-        )
+        query = text(f"SELECT * FROM {table_name}")
+        
         with self.get_connection() as conn:
             result = conn.execute(query)
             values = {row for row in result}
