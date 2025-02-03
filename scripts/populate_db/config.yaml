@@ -1,4 +1,0 @@
-db_name: population_test_2
-data_folder: data
-schema_file: schema.sql
-subset: 5
