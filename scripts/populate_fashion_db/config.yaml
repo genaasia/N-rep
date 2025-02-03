@@ -1,0 +1,4 @@
+db_name: fashion
+data_folder: data
+schema_file: schema.sql
+subset: 5
