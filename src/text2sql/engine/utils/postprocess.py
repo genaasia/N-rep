@@ -1,0 +1,35 @@
+import sqlparse
+
+
+def normalize_sql(query):
+    """
+    Normalize SQL query by removing extra spaces and formatting consistently.
+    """
+    return sqlparse.format(query, reindent=True, keyword_case="upper")
+
+
+def extract_sql_query(text):
+    """
+    Extracts SQL query from a string containing comments and query.
+    Removes comments (lines starting with --) and empty lines.
+
+    Args:
+        text (str): Input text containing SQL query and comments
+
+    Returns:
+        str: Clean SQL query without comments
+    """
+    # Split the text into lines
+    lines = text.strip().split("\n")
+
+    # Filter out comments and empty lines
+    sql_lines = []
+    for line in lines:
+        line = line.strip()
+        # Skip empty lines and comment lines
+        if not line or line.startswith("--"):
+            continue
+        sql_lines.append(line)
+
+    # Join the remaining lines back together
+    return "\n".join(sql_lines)

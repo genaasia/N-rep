@@ -1,14 +1,20 @@
 import os
 
 from loguru import logger
-from text2sql.engine.generation import (AzureGenerator, BedrockGenerator,
-                                        GCPGenerator)
+from text2sql.engine.generation import (
+    AzureGenerator, 
+    BedrockGenerator,
+    GCPGenerator,
+)
 from text2sql.engine.generation.postprocessing import (
-    extract_first_code_block, extract_sql_from_json)
-from text2sql.engine.prompts import (ESQLCoTPromptFormatter,
-                                     GenaCoTPromptFormatter,
-                                     GenaCoTZsPromptFormatter,
-                                     LegacyFewShotPromptFormatter)
+    extract_first_code_block, 
+    extract_sql_from_json,
+)
+from text2sql.engine.prompts import (
+    ESQLCoTPromptFormatter,
+    GenaCoTPromptFormatter,
+    LegacyFewShotPromptFormatter,
+)
 
 
 def get_generator(generator_name, model, post_func):

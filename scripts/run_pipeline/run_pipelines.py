@@ -25,12 +25,10 @@ from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
 
-from settings import Settings
-
 load_dotenv()
 
-from get_tools import get_formatter, get_generator, get_postfunc, get_schema_description
-from pipeline import single_sample_pipe
+from text2sql.pipeline import Settings, single_sample_pipe
+from text2sql.pipeline.tools import get_formatter, get_generator, get_postfunc, get_schema_description
 from evaluation.run_eval import run_eval
 
 
