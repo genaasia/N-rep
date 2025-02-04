@@ -1,10 +1,21 @@
 import traceback
 from abc import ABC, abstractmethod
 from typing import Dict
+from time import time
 
 from loguru import logger
 from text2sql.utils.postprocess import extract_sql_query, normalize_sql, get_table_names_from_query
 from text2sql.data.schema_to_text import schema_to_datagrip_format
+
+
+def generate_and_measure(generate_func, messages, generator_config):
+    start = time()
+    if generator_config:
+        prediction = generate_func(messages, **generator_config)
+    else:
+        prediction = generate_func(messages)
+    end = time()
+    return prediction, end - start
 
 
 def single_sample_pipe(
@@ -46,13 +57,10 @@ def single_sample_pipe(
         for _ in range(self_consistency):
             for attempt in range(max_retries):
                 try:
-                    if generator_config:
-                        prediction = generator.generate(messages, **generator_config)
-                    else:
-                        prediction = generator.generate(messages)
+                    prediction, inference_time = generate_and_measure(generator.generate, messages, generator_config)
                     prediction = extract_sql_query(prediction)
                     prediction = normalize_sql(prediction)
-                    predictions_not_grouped.append(prediction)
+                    predictions_not_grouped.append((prediction, inference_time))
                     break  # Success - exit retry loop
                 except Exception as e:
                     print(f"{attempt=}")
@@ -110,10 +118,7 @@ def repair_pipe(
 
         for attempt in range(max_retries):
             try:
-                if generator_config:
-                    prediction = generator.generate(messages, **generator_config)
-                else:
-                    prediction = generator.generate(messages)
+                prediction, _ = generate_and_measure(generator.generate, messages, generator_config)
                 prediction = extract_sql_query(prediction)
                 prediction = normalize_sql(prediction)
                 break  # Success - exit retry loop
@@ -171,7 +176,7 @@ class ConsistencyPipeline(Pipeline):
 
     def validate_and_repair_inferences(self, inference_result, test_sample):
         predictions_new = []
-        for prediction in inference_result["predictions"]:
+        for prediction, inference_time in inference_result["predictions"]:
             results = self.db_instance.validate_query(self.db_name, prediction)
             if results.get("validated"):
                 results = self.db_instance.normalize_db_query_results(results)
@@ -179,6 +184,7 @@ class ConsistencyPipeline(Pipeline):
                     "sql": prediction,
                     "valid": True,
                     "repaired": False,
+                    "inference_time_secs": inference_time,
                     "results": results["execution_result"],
                 }
             else:
@@ -201,6 +207,7 @@ class ConsistencyPipeline(Pipeline):
                         "sql": repaired_prediction,
                         "valid": True,
                         "repaired": True,
+                        "inference_time_secs": inference_time,
                         "results": repaired_results["execution_result"],
                     }
                 else:
