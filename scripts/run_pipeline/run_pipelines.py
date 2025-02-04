@@ -12,8 +12,6 @@ import random
 from time import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from functools import partial
-from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -24,41 +22,22 @@ from text2sql.data import PostgresDataset
 from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
+from text2sql.engine.prompts import GenaRepairPromptFormatter
 
 load_dotenv()
 
-from text2sql.pipeline import Settings, single_sample_pipe
+from text2sql.pipeline import Settings, ConsistencyPipeline
 from text2sql.pipeline.tools import get_formatter, get_generator, get_postfunc, get_schema_description
 from evaluation.run_eval import run_eval
 
 
 def run_pipe_on_dataset(
-    process_single_sample,
-    formatter,
-    generator,
-    schema_description,
+    pipeline,
     packative_test_data,
-    generator_config=None,
     batch_size=None,
     max_workers=4,
-    candidate_count=1,
-    embedder=None,
-    retriever=None,
-    top_k=0
 ):
     test_results = []
-
-    process_func = partial(
-        process_single_sample,
-        formatter=formatter,
-        generator=generator,
-        schema_description=schema_description,
-        generator_config=generator_config,
-        self_consistency=candidate_count,
-        embedder=embedder,
-        retriever=retriever,
-        top_k=top_k
-    )
 
     if not batch_size:
         batch_size = len(packative_test_data)
@@ -68,7 +47,7 @@ def run_pipe_on_dataset(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = list(
             tqdm.tqdm(
-                executor.map(process_func, packative_test_data[:batch_size]),
+                executor.map(pipeline.run, packative_test_data[:batch_size]),
                 total=batch_size,
                 desc="Processing samples",
             )
@@ -81,6 +60,9 @@ def run_pipe_on_dataset(
 def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name, database_type, embedder=None, retriever=None):
     # CREATE PROMPT FORMATTER
     formatter = get_formatter(pipe_configuration.formatter, database_type)
+
+    # CREATE REPAIR PROMPT FORMATTER
+    repair_formatter = GenaRepairPromptFormatter(database_type=database_type)
 
     # GET POST FUNCTION
     post_func = get_postfunc(pipe_configuration.postfunc)
@@ -95,47 +77,31 @@ def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name,
     # GET SCHEMA DESCRIPTION
     schema_description = get_schema_description(pipe_configuration.schema, db_instance)
 
-    # RUN PIPELINE OVER DATASET
-    test_results = run_pipe_on_dataset(
-        single_sample_pipe,
+    # CREATE PIPELINE
+    max_retry = 3
+    pipeline = ConsistencyPipeline(
         formatter,
         generator,
         schema_description,
+        pipe_configuration.generator.config,
+        max_retry,
+        pipe_configuration.candidate_count,
+        embedder,
+        retriever,
+        pipe_configuration.generator.top_k,
+        db_instance,
+        db_name,
+        repair_formatter
+    )
+
+    # RUN PIPELINE OVER DATASET
+    test_results = run_pipe_on_dataset(
+        pipeline,
         eval_data,
         batch_size=settings.batch_size,
         max_workers=settings.max_workers,
-        generator_config=pipe_configuration.generator.config,
-        candidate_count=pipe_configuration.candidate_count,
-        embedder=embedder,
-        retriever=retriever,
-        top_k=pipe_configuration.generator.top_k
     )
-    return get_db_results_and_normalize(test_results, db_instance, db_name)
-
-
-def get_db_results_and_normalize(test_results, db_instance, db_name):
-    test_results_updated = []
-    for i, test_result in enumerate(test_results):
-        if "predictions" not in test_result:
-            logger.debug(f"Couldn't find predictions in row {i}")
-            continue
-        predictions_new = []
-        for prediction in test_result["predictions"]:
-            results = db_instance.validate_query(db_name, prediction)
-            if results.get("validated"):
-                results = db_instance.normalize_db_query_results(results)
-                obj = {
-                    "sql": prediction,
-                    "valid": True,
-                    "results": results["execution_result"],
-                }
-            else:
-                obj = {"sql": prediction, "valid": False}
-            # predictions_new[prediction] = obj
-            predictions_new.append(obj)
-        test_results[i]["predictions"] = predictions_new
-        test_results_updated.append(test_results[i])
-    return test_results_updated
+    return test_results
 
 
 def save_results(test_results, eval_results, file_name, settings):
@@ -306,6 +272,8 @@ def main():
                 eval_results = run_eval(test_results, test_results, score_cache)
 
                 save_results(test_results, eval_results, file_name, settings)
+
+    retriever.client.close()
 
     if not args.run_inference and args.run_eval:
         if not args.inference_file:
