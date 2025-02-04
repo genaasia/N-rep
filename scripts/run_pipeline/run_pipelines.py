@@ -151,7 +151,7 @@ def save_results(test_results, eval_results, file_name, settings):
     results_file_path = os.path.join(settings.results_folder, f"{file_name}.json")
     if not os.path.exists(settings.results_folder):
         os.mkdir(settings.results_folder)
-    logger.debug(f"Folder {settings.results_folder} doesn't exist, creating it now!")
+        logger.debug(f"Folder {settings.results_folder} doesn't exist, creating it now!")
     with open(results_file_path, "w") as f:
         json.dump(eval_results, f, indent=2)
 
