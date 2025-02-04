@@ -2,8 +2,6 @@ import datetime
 
 from abc import ABC, abstractmethod
 
-from sql_metadata import Parser
-
 from text2sql.engine.prompts.constants import (
     DEFAULT_FEWSHOT_SYSTEM_PROMPT,
     FEWSHOT_USER_EXAMPLE_TEMPLATE,
@@ -30,15 +28,6 @@ from text2sql.engine.prompts.constants_v3 import (
      GENA_USER_QUERY_TEMPLATE,
      GENA_ASSISTANT_TEMPLATE
 )
-
-
-def get_table_names_from_query(query: str) -> list[str]:
-    """try to extract mentioned tables from SQL query"""
-    try:
-        predicted_tables: list[str] = list(Parser(query).tables)
-    except Exception as e:
-        predicted_tables = []
-    return predicted_tables
 
 
 class BasePromptFormatter(ABC):

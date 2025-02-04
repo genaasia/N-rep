@@ -1,5 +1,16 @@
 import sqlparse
 
+from sql_metadata import Parser
+
+
+def get_table_names_from_query(query: str) -> list[str]:
+    """try to extract mentioned tables from SQL query"""
+    try:
+        predicted_tables: list[str] = list(Parser(query).tables)
+    except Exception as e:
+        predicted_tables = []
+    return predicted_tables
+
 
 def normalize_sql(query):
     """
