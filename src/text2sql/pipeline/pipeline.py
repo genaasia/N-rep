@@ -1,7 +1,8 @@
-from typing import Dict
+import traceback
 from abc import ABC, abstractmethod
-from loguru import logger
+from typing import Dict
 
+from loguru import logger
 from text2sql.utils.postprocess import extract_sql_query, normalize_sql
 
 
@@ -13,9 +14,9 @@ def single_sample_pipe(
     generator_config,
     max_retries: int = 3,
     self_consistency: int = 1,
-    embedder = None,
-    retriever = None,
-    top_k = 3
+    embedder=None,
+    retriever=None,
+    top_k=3,
 ) -> Dict:
     """Process a single test sample using threads."""
     output = test_sample.copy()
@@ -30,12 +31,12 @@ def single_sample_pipe(
             else:
                 search_results = []
             messages = formatter.generate_messages(
-                schema_description=schema_description, query=sample_query, few_shot_examples=search_results
+                schema_description=schema_description,
+                query=sample_query,
+                few_shot_examples=search_results,
             )
         else:
-            messages = formatter.generate_messages(
-                schema_description=schema_description, query=sample_query
-            )
+            messages = formatter.generate_messages(schema_description=schema_description, query=sample_query)
 
         # Retry logic for generate
         last_error = None
@@ -61,9 +62,7 @@ def single_sample_pipe(
 
         if len(predictions_not_grouped) == 0:
             logger.error(f"An error occured during prediction: {last_error}")
-            output["error"] = (
-                f"Failed after {max_retries} attempts. Last error: {str(last_error)}"
-            )
+            output["error"] = f"Failed after {max_retries} attempts. Last error: {str(last_error)}"
             output["predictions"] = []
             output["is_valid"] = False
             output["execution_error"] = str(last_error)
@@ -73,7 +72,8 @@ def single_sample_pipe(
         return output
 
     except Exception as e:
-        logger.error(f"An error occured before prediction: {e}")
+        error_traceback = traceback.format_exc()
+        logger.error(f"An error occurred before prediction: {e}\nTraceback:\n{error_traceback}")
         # Handle errors that occur before prediction
         output["error"] = str(e)
         output["predictions"] = None
@@ -90,17 +90,17 @@ class Pipeline(ABC):
 
 class ConsistencyPipeline(Pipeline):
     def __init__(
-            self, 
-            formatter, 
-            generator, 
-            schema_description, 
-            generator_config, 
-            max_retries, 
-            self_consistency, 
-            embedder, 
-            retriever, 
-            top_k,
-        ):
+        self,
+        formatter,
+        generator,
+        schema_description,
+        generator_config,
+        max_retries,
+        self_consistency,
+        embedder,
+        retriever,
+        top_k,
+    ):
         self.formatter = formatter
         self.generator = generator
         self.schema_description = schema_description
@@ -122,5 +122,5 @@ class ConsistencyPipeline(Pipeline):
             self.self_consistency,
             self.embedder,
             self.retriever,
-            self.top_k
+            self.top_k,
         )
