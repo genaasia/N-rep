@@ -2,7 +2,7 @@ from typing import Dict
 from abc import ABC, abstractmethod
 from loguru import logger
 
-from text2sql.engine.utils.postprocess import extract_sql_query, normalize_sql
+from text2sql.utils.postprocess import extract_sql_query, normalize_sql
 
 
 def single_sample_pipe(
