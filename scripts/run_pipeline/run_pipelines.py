@@ -78,9 +78,9 @@ def run_pipe_on_dataset(
     return test_results
 
 
-def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name, embedder=None, retriever=None):
+def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name, database_type, embedder=None, retriever=None):
     # CREATE PROMPT FORMATTER
-    formatter = get_formatter(pipe_configuration.formatter)
+    formatter = get_formatter(pipe_configuration.formatter, database_type)
 
     # GET POST FUNCTION
     post_func = get_postfunc(pipe_configuration.postfunc)
@@ -282,6 +282,7 @@ def main():
                 settings,
                 packative_dataset,
                 os.environ.get("POSTGRES_DB"),
+                settings.database_type,
                 embedder,
                 retriever
             )

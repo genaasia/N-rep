@@ -45,13 +45,13 @@ def get_generator(generator_name, model, post_func):
     return generator
 
 
-def get_formatter(formatter_name):
+def get_formatter(formatter_name, database_type):
     if formatter_name == "legacy":
-        formatter = LegacyFewShotPromptFormatter(database_type="postgres")
+        formatter = LegacyFewShotPromptFormatter(database_type=database_type)
     elif formatter_name == "ESQLCoT":
-        formatter = ESQLCoTPromptFormatter(database_type="postgres")
+        formatter = ESQLCoTPromptFormatter(database_type=database_type)
     elif formatter_name == "GENACoT":
-        formatter = GenaCoTPromptFormatter()
+        formatter = GenaCoTPromptFormatter(database_type=database_type)
     else:
         raise Exception(f"No known formatter with the name {formatter_name}")
     return formatter
