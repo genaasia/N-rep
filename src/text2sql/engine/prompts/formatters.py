@@ -323,12 +323,11 @@ class GenaRepairPromptFormatter(BasePromptFormatter):
     def generate_messages(
             self, 
             schema_description: str, 
+            table_text: str,
             query: str, 
             predicted_sql: str,
             error: str | None = None,
         ) -> list[dict]:
-
-        relevant_tables = get_table_names_from_query(predicted_sql)
 
         formatted_system_message = GENA_REPAIR_SYSTEM_PROMPT_TEMPLATE.format(
             sql_dialect=self.database_type
@@ -338,7 +337,7 @@ class GenaRepairPromptFormatter(BasePromptFormatter):
         query_message = GENA_REPAIR_USER_MESSAGE_TEMPLATE.format(
              sql_dialect=self.database_type,
              schema_description=schema_description,
-             relevant_tables=relevant_tables,
+             relevant_tables=table_text,
              user_question=query,
              original_sql=predicted_sql,
              error_message=error
@@ -358,11 +357,10 @@ class GenaRewritePromptFormatter(BasePromptFormatter):
     def generate_messages(
             self, 
             schema_description: str, 
+            table_text: str,
             query: str, 
             predicted_sql: str,
         ) -> list[dict]:
-
-        relevant_tables = get_table_names_from_query(predicted_sql)
 
         formatted_system_message = GENA_REWRITE_SYSTEM_PROMPT_TEMPLATE.format(
             sql_dialect=self.database_type
@@ -372,7 +370,7 @@ class GenaRewritePromptFormatter(BasePromptFormatter):
         query_message = GENA_REWRITE_USER_MESSAGE_TEMPLATE.format(
              sql_dialect=self.database_type,
              schema_description=schema_description,
-             relevant_tables=relevant_tables,
+             relevant_tables=table_text,
              user_question=query,
              original_sql=predicted_sql      
         )
