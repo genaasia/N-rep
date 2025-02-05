@@ -22,7 +22,7 @@ from text2sql.data import PostgresDataset
 from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
-from text2sql.engine.prompts import GenaRepairPromptFormatter
+from text2sql.engine.prompts import GenaRepairPromptFormatter, GenaRewritePromptFormatter
 
 load_dotenv()
 
@@ -61,8 +61,9 @@ def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name,
     # CREATE PROMPT FORMATTER
     formatter = get_formatter(pipe_configuration.formatter, database_type)
 
-    # CREATE REPAIR PROMPT FORMATTER
+    # CREATE REPAIR AND REWRITE PROMPT FORMATTER
     repair_formatter = GenaRepairPromptFormatter(database_type=database_type)
+    rewrite_formatter = GenaRewritePromptFormatter(database_type=database_type)
 
     # GET POST FUNCTION
     post_func = get_postfunc(pipe_configuration.postfunc)
@@ -91,7 +92,8 @@ def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name,
         pipe_configuration.generator.top_k,
         db_instance,
         db_name,
-        repair_formatter
+        repair_formatter,
+        rewrite_formatter
     )
 
     # RUN PIPELINE OVER DATASET
