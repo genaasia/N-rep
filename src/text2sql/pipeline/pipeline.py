@@ -1,6 +1,6 @@
 import traceback
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, Optional, Tuple
 from time import time
 
 from loguru import logger
@@ -107,7 +107,6 @@ def repair_rewrite_pipe(
         sample_query = test_sample["nl_en_query"]  # Should come from config file
 
         if error_message:
-            print(f"{error_message=}")
             messages = formatter.generate_messages(
                 schema_description=schema_description,
                 table_text=table_text,
@@ -195,7 +194,12 @@ class ConsistencyPipeline(Pipeline):
                 filtered_schema["tables"][table_name] = self.schema["tables"][table_name]
         return schema_to_datagrip_format(self.db_name, filtered_schema)
 
-    def validate_and_update_inferences(self, inference_result, test_sample):
+    def validate_and_update_inferences(self, inference_result: Dict, test_sample: Dict) -> Dict:
+        """
+        Validates each prediction.
+        If the results are valid and a rewrite prompt formatter exists, tries to rewrite and improve the SQL prediction.
+        If the results are invalid and a repair prompt formatter exists, tries to repair the SQL prediction.
+        """
         predictions_new = []
         for prediction, inference_time in inference_result["predictions"]:
             results = self.db_instance.validate_query(self.db_name, prediction)
@@ -250,7 +254,12 @@ class ConsistencyPipeline(Pipeline):
         inference_result["predictions"] = predictions_new
         return inference_result
 
-    def run_repair(self, test_sample, prediction, error_message, filtered_schema_description):
+    def run_repair(
+        self, test_sample: Dict, prediction: str, error_message: str, filtered_schema_description: str
+    ) -> Tuple[Optional[str], Optional[float]]:
+        """
+        Attempts to repair a given SQL query based on the error message.
+        """
         repaired_prediction, inference_time = repair_rewrite_pipe(
             test_sample,
             prediction,
@@ -264,7 +273,12 @@ class ConsistencyPipeline(Pipeline):
         )
         return repaired_prediction, inference_time
 
-    def run_rewrite(self, test_sample, prediction, filtered_schema_description):
+    def run_rewrite(
+        self, test_sample: Dict, prediction: str, filtered_schema_description: str
+    ) -> Tuple[Optional[str], Optional[float]]:
+        """
+        Attempts to rewrite a given SQL query.
+        """
         rewritten_prediction, inference_time = repair_rewrite_pipe(
             test_sample,
             prediction,
@@ -277,7 +291,11 @@ class ConsistencyPipeline(Pipeline):
         )
         return rewritten_prediction, inference_time
 
-    def run(self, test_sample):
+    def run(self, test_sample: Dict) -> Dict:
+        """
+        Runs the full pipeline:
+        generating predictions for a sample, validating, attempting to update by rewrite or repair.
+        """
         inference_result = single_sample_pipe(
             test_sample,
             self.formatter,
