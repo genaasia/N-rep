@@ -24,10 +24,14 @@ class PipeConfig:
     generator: GeneratorConfig
     candidate_count: int
     pipe_name: str
+    rewrite: bool = False
+    repair: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "formatter": self.formatter,
+            "schema": self.schema,
+            "rewrite": self.rewrite,
+            "repair": self.repair,
             "schema": self.schema,
             "postfunc": self.postfunc,
             "generator": self.generator.to_dict(),
@@ -46,6 +50,8 @@ class PipeConfig:
         )
         return cls(
             formatter=data["formatter"],
+            rewrite=data.get("rewrite", False),
+            repair=data.get("repair", False),
             schema=data["schema"],
             postfunc=data["postfunc"],
             generator=generator,

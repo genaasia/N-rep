@@ -13,6 +13,8 @@ max_workers: 4
 
 pipe_configurations:
   - formatter: GENACoT
+    rewrite: True
+    repair: True
     schema: basic
     postfunc: extract_first_code_block
     generator:
@@ -24,6 +26,7 @@ pipe_configurations:
     candidate_count: 1
     pipe_name: pipe_v1
   - formatter: GENACoTZs
+    repair: True
     schema: basic
     postfunc: extract_first_code_block
     generator:
