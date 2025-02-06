@@ -82,7 +82,10 @@ def run_eval(predicted_data, target_data, score_cache, target_sql_key):
                     predictions, target_sql, target_execution, score_cache
                 )
                 predicted_data[i]["highest_voted_valid"] = {
+                    "sql_match_score": sql_match_score,
+                    "execution_match_score": execution_match_score,
                     "intent_score": intent_score,
+                    "soft_f1_score": soft_f1_score,
                     "predicted_sql": predicted_sql,
                     "predicted_execution": predicted_execution,
                 }
