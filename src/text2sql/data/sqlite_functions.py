@@ -1,6 +1,7 @@
 import os
 import sqlite3
 
+from functools import lru_cache
 from typing import Any
 
 from loguru import logger
@@ -17,6 +18,7 @@ def get_sqlite_database_file(base_dir: str, database: str) -> str:
     raise FileNotFoundError(f"Database file for {database=} not found in {base_dir=}")
 
 
+@lru_cache(maxsize=1024)
 def query_sqlite_database(base_dir: str, database: str, sql_query: str) -> list[dict]:
     """query sqlite database and return results"""
     db_path = get_sqlite_database_file(base_dir=base_dir, database=database)

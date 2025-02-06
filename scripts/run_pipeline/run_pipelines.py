@@ -1,7 +1,7 @@
 import sys
 import copy
 
-# sys.path.append("../../src")
+sys.path.append("../../src")
 from text2sql import hello
 
 assert hello.message == "hello, world!", "Something went wrong importing text2sql :("
@@ -148,8 +148,8 @@ def save_results(test_results, eval_results, file_name, settings):
 
     outputs_file_path = os.path.join(settings.outputs_folder, f"{file_name}.json")
     experiments_file_path = os.path.join(settings.outputs_folder, f"{file_name}_experiment_format.json")
-    if not os.path.exists(settings.outputs_folder):
-        os.mkdir(settings.outputs_folder)
+    if not os.path.isdir(settings.outputs_folder):
+        os.makedirs(settings.outputs_folder)
         logger.debug(
             f"Folder {settings.outputs_folder} doesn't exist, creating it now!"
         )
@@ -159,14 +159,14 @@ def save_results(test_results, eval_results, file_name, settings):
         json.dump(experiment_results, f, indent=2)
 
     results_file_path = os.path.join(settings.results_folder, f"{file_name}.json")
-    if not os.path.exists(settings.results_folder):
-        os.mkdir(settings.results_folder)
+    if not os.path.isdir(settings.results_folder):
+        os.makedirs(settings.results_folder)
         logger.debug(f"Folder {settings.results_folder} doesn't exist, creating it now!")
     with open(results_file_path, "w") as f:
         json.dump(eval_results, f, indent=2)
 
-    if not os.path.exists(settings.plots_folder):
-        os.mkdir(settings.plots_folder)
+    if not os.path.isdir(settings.plots_folder):
+        os.makedirs(settings.plots_folder)
         logger.debug(f"Folder {settings.plots_folder} doesn't exist, creating it now!")
 
     plot_file_path = os.path.join(settings.plots_folder, f"{file_name}.png")
@@ -223,8 +223,8 @@ def main():
     log_file = f"{formatted_date}.log"
     logs_folder = settings.log_folder
     logs_file_path = os.path.join(logs_folder, log_file)
-    if not os.path.exists(logs_folder):
-        os.mkdir(logs_folder)
+    if not os.path.isdir(logs_folder):
+        os.makedirs(logs_folder)
         logger.debug(f"Folder {logs_folder} doesn't exist, creating it now!")
     logger.add(logs_file_path)
 
@@ -289,9 +289,11 @@ def main():
             )
 
         test_data = reader(settings.test_file_path).to_dict(
-            orient="records"
-        )[:settings.batch_size]
-        for idx in range(len(test_data)):
+                    orient="records"
+        )
+        if settings.batch_size:
+            test_data = test_data[settings.batch_size]
+        for idx in tqdm.trange(len(test_data)):
             if not "api_execution_result" in test_data[idx]:
                 if settings.benchmark:
                     db_name = test_data[idx][settings.db_name_key]
@@ -304,6 +306,9 @@ def main():
                     logger.error(
                         "api_execution_result is empty and the golden query is not valid!\nSomething seems wrong with your data"
                     )
+        # TODO: make this better, don't overwrite original data
+        with open(settings.test_file_path, "w") as f:
+            json.dump(test_data, f, indent=2)
         if args.subset:
             test_data = random.sample(test_data, int(args.subset))
         for pipe_configuration in settings.pipe_configurations:
@@ -327,8 +332,8 @@ def main():
             file_name = f"{pipe_configuration.pipe_name}_{formatted_date}.json"
             inference_file_path = os.path.join(settings.inference_folder, file_name)
 
-            if not os.path.exists(settings.inference_folder):
-                os.mkdir(settings.inference_folder)
+            if not os.path.isdir(settings.inference_folder):
+                os.makedirs(settings.inference_folder)
                 logger.debug(
                     f"Folder {settings.inference_folder} doesn't exist, creating it now!"
                 )
