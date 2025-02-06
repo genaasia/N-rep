@@ -250,6 +250,15 @@ def main():
         packative_test_data = reader(settings.test_file_path).to_dict(
             orient="records"
         )
+        for idx in range(len(packative_test_data)):
+            if not "api_execution_result" in packative_test_data[idx]:
+                result = db_instance.validate_query(os.environ.get("POSTGRES_DB"), packative_test_data[idx][settings.target_sql_key])
+                if result["validated"]:
+                    packative_test_data[idx]["api_execution_result"] = result["execution_result"]
+                else:
+                    logger.error(
+                        "api_execution_result is empty and the golden query is not valid!\nSomething seems wrong with your data"
+                    )
         if args.subset:
             packative_test_data = random.sample(packative_test_data, int(args.subset))
         for pipe_configuration in settings.pipe_configurations:
