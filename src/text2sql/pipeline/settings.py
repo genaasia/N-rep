@@ -65,6 +65,7 @@ class Settings:
     train_embedding_file_path: Path
     test_file_path: Path
     collection_name: str
+    database_type: str
     batch_size: int
     max_workers: int
     pipe_configurations: List[PipeConfig]
@@ -91,6 +92,7 @@ class Settings:
             train_embedding_file_path=Path(config["train_embedding_file_path"]),
             test_file_path=Path(config["test_file_path"]),
             collection_name=config["collection_name"],
+            database_type=config["database_type"],
             batch_size=config["batch_size"],
             max_workers=config["max_workers"],
             pipe_configurations=pipe_configs,
@@ -106,6 +108,7 @@ class Settings:
             "train_embedding_file_path": str(self.train_embedding_file_path),
             "test_file_path": str(self.test_file_path),
             "collection_name": str(self.collection_name),
+            "database_type": str(self.database_type),
             "batch_size": self.batch_size,
             "pipe_configurations": [
                 {

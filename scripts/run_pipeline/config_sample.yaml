@@ -3,6 +3,7 @@ outputs_folder : ./outputs_100_sc
 results_folder: ./results_100_sc
 plots_folder: ./plots_100_sc
 inference_folder: ./inference_100_sc
+database_type: postgres
 train_file_path: ./data/packative_nl2sql_train_en_20241114.csv
 train_embedding_file_path: ./data/packative_nl2sql_train_en_20241114_embedding.npy
 test_file_path: ./data/packative_nl2sql_eval_fixed20241119_20241128.csv

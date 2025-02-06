@@ -29,17 +29,17 @@ module-based code for running text2sql tests
     - [x] basic few-shot conversation formatter
     - [x] sql markdown code block formatter
     - [ ] alpaca in-context learning logic (like DAIL-SQL)
-    - [ ] few-shot message logic (like Dubo-SQL)
+    - [x] few-shot message logic (like Dubo-SQL)
 - [ ] generation:
     - [x] azure generator
     - [x] bedrock generator
     - [ ] (*later*) sagemaker (fine-tuned) generator
     - [ ] (*later*) pandas style inference mode (*Before Generation, Align it!*)
 - [ ] postprocessing:
-    - [ ] validation
+    - [x] validation
     - [ ] repair prompt
 - [ ] inference
-    - [ ] experiment config parser and runner
+    - [x] experiment config parser and runner
     - [ ] pre-SQL-generator (*Before Generation, Align it!*)
 - [ ] evaluation
     - [x] port evaluation code from gena-ai

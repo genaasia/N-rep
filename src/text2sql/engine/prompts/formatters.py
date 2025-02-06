@@ -12,10 +12,21 @@ from text2sql.engine.prompts.constants import (
 from text2sql.engine.prompts.constants_v2 import (
     CHESS_COT_PROMPT,
     ESQL_COT_PROMPT,
-    ESQL_QE_PROMPT,
-    GENA_COT_PROMPT,
-    GENA_COT_PROMPT_ZERO,
-    GENA_COT_USER_PROMPT
+    ESQL_QE_PROMPT
+)
+
+from text2sql.engine.prompts.constants_v3 import GENA_COT_PROMPT_TEMPLATE as GENA_COT_PROMPT_V3_TEMPLATE
+from text2sql.engine.prompts.constants_v3 import GENA_REPAIR_SYSTEM_PROMPT_TEMPLATE
+from text2sql.engine.prompts.constants_v3 import GENA_REPAIR_USER_MESSAGE_TEMPLATE
+from text2sql.engine.prompts.constants_v3 import GENA_REWRITE_SYSTEM_PROMPT_TEMPLATE
+from text2sql.engine.prompts.constants_v3 import GENA_REWRITE_USER_MESSAGE_TEMPLATE
+from text2sql.engine.prompts.constants_v3 import (
+     GENA_MYSQL_GUIDELINES,
+     GENA_POSTGRES_GUIDELINES,
+     GENA_SQLITE_GUIDELINES,
+     GENA_USER_EXAMPLE_TEMPLATE,
+     GENA_USER_QUERY_TEMPLATE,
+     GENA_ASSISTANT_TEMPLATE
 )
 
 
@@ -121,6 +132,7 @@ class LegacyFewShotPromptFormatter(BasePromptFormatter):
         messages.append({"role": "user", "content": query_message})
         return messages
 
+
 class ChessCoTPromptFormatter(BasePromptFormatter):
     def __init__(
             self,
@@ -142,6 +154,7 @@ class ChessCoTPromptFormatter(BasePromptFormatter):
         messages.append({"role": "user", "content": query_message})
         return messages
 
+
 class ESQLCoTPromptFormatter(BasePromptFormatter):
     def __init__(
             self,
@@ -162,6 +175,7 @@ class ESQLCoTPromptFormatter(BasePromptFormatter):
         query_message = self.format_user_message(schema_description, query)
         messages.append({"role": "user", "content": query_message})
         return messages
+
 
 class ESQLQEPromptFormatter(BasePromptFormatter):
     def __init__(
@@ -186,9 +200,18 @@ class ESQLQEPromptFormatter(BasePromptFormatter):
 
 
 class GenaCoTPromptFormatter(BasePromptFormatter):
-    def format_user_message(self, user_message) -> str:
-        """format a single message"""
-        return GENA_COT_USER_PROMPT.format(user_message=user_message)
+    """format messages in the GENA AI API format with custom prompt template."""
+    def __init__(
+            self,
+            database_type: str,
+            few_shot_query_key: str = "nl_en_query",
+            few_shot_target_key: str = "sql_query",
+            current_date: str = datetime.datetime.now().strftime("%A, %B %d, %Y")
+        ):
+        self.database_type = database_type
+        self.few_shot_query_key = few_shot_query_key
+        self.few_shot_target_key = few_shot_target_key
+        self.current_date = current_date
 
     def generate_messages(
             self, 
@@ -196,37 +219,98 @@ class GenaCoTPromptFormatter(BasePromptFormatter):
             query: str, 
             few_shot_examples: list[dict] = [],
         ) -> list[dict]:
+        if self.database_type == "mysql":
+            dialect_guidelines = GENA_MYSQL_GUIDELINES
+        elif self.database_type == "postgres":
+            dialect_guidelines = GENA_POSTGRES_GUIDELINES
+        elif self.database_type == "sqlite":
+            dialect_guidelines = GENA_SQLITE_GUIDELINES
+        else:
+            raise ValueError(f"unsupported database type: {self.database_type}")
 
-        # if system message is provided, use it and add schema description
-        formatted_system_message = GENA_COT_PROMPT.format(schema_description=schema_description)
+        formatted_system_message = GENA_COT_PROMPT_V3_TEMPLATE.format(
+            sql_dialect=self.database_type,
+            dialect_guidelines=dialect_guidelines,
+            schema_description=schema_description
+        )
         messages = [{"role": "system", "content": formatted_system_message}]
 
         for example in few_shot_examples:
-            example_query = example["data"]["nl_en_query"]
-            example_sql = example["data"]["sql_query"]
-            messages.append({"role": "user", "content": f"text query: {example_query}"})
-            output = f"```sql\n{example_sql}\n```"
-            messages.append({"role": "assistant", "content": output})
+            example_query = example["data"][self.few_shot_query_key]
+            example_sql = example["data"][self.few_shot_target_key]
+            messages.append({"role": "user", "content": GENA_USER_EXAMPLE_TEMPLATE.format(user_question=example_query, sql_dialect=self.database_type)})
+            messages.append({"role": "assistant", "content": GENA_ASSISTANT_TEMPLATE.format(sql_query=example_sql)})
 
-        query_message = self.format_user_message(query)
+        query_message = GENA_USER_QUERY_TEMPLATE.format(
+             current_date=self.current_date, 
+             user_question=query, 
+             sql_dialect=self.database_type
+        )
         messages.append({"role": "user", "content": query_message})
         return messages
+    
 
-class GenaCoTZsPromptFormatter(BasePromptFormatter):
-    def format_user_message(self, user_message) -> str:
-        """format a single message"""
-        return GENA_COT_USER_PROMPT.format(user_message=user_message)
+class GenaRepairPromptFormatter(BasePromptFormatter):
+    """format messages for repair with custom prompt template."""
+    def __init__(
+            self,
+            database_type: str,
+        ):
+        self.database_type = database_type
 
     def generate_messages(
             self, 
             schema_description: str, 
+            table_text: str,
             query: str, 
+            predicted_sql: str,
+            error: str | None = None,
         ) -> list[dict]:
 
-        # if system message is provided, use it and add schema description
-        formatted_system_message = GENA_COT_PROMPT_ZERO.format(schema_description=schema_description)
+        formatted_system_message = GENA_REPAIR_SYSTEM_PROMPT_TEMPLATE.format(
+            sql_dialect=self.database_type
+        )
         messages = [{"role": "system", "content": formatted_system_message}]
 
-        query_message = self.format_user_message(query)
+        query_message = GENA_REPAIR_USER_MESSAGE_TEMPLATE.format(
+             sql_dialect=self.database_type,
+             schema_description=schema_description,
+             relevant_tables=table_text,
+             user_question=query,
+             original_sql=predicted_sql,
+             error_message=error
+        )
+        messages.append({"role": "user", "content": query_message})
+        return messages
+
+
+class GenaRewritePromptFormatter(BasePromptFormatter):
+    """format messages for rewrite with custom prompt template."""
+    def __init__(
+            self,
+            database_type: str,
+        ):
+        self.database_type = database_type
+
+    def generate_messages(
+            self, 
+            schema_description: str, 
+            table_text: str,
+            query: str, 
+            predicted_sql: str,
+        ) -> list[dict]:
+
+        formatted_system_message = GENA_REWRITE_SYSTEM_PROMPT_TEMPLATE.format(
+            sql_dialect=self.database_type
+        )
+        messages = [{"role": "system", "content": formatted_system_message}]
+
+        query_message = GENA_REWRITE_USER_MESSAGE_TEMPLATE.format(
+             sql_dialect=self.database_type,
+             schema_description=schema_description,
+             relevant_tables=table_text,
+             user_question=query,
+             original_sql=predicted_sql      
+        )
         messages.append({"role": "user", "content": query_message})
         return messages

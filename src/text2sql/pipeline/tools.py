@@ -1,14 +1,20 @@
 import os
 
 from loguru import logger
-from text2sql.engine.generation import (AzureGenerator, BedrockGenerator,
-                                        GCPGenerator)
+from text2sql.engine.generation import (
+    AzureGenerator, 
+    BedrockGenerator,
+    GCPGenerator,
+)
 from text2sql.engine.generation.postprocessing import (
-    extract_first_code_block, extract_sql_from_json)
-from text2sql.engine.prompts import (ESQLCoTPromptFormatter,
-                                     GenaCoTPromptFormatter,
-                                     GenaCoTZsPromptFormatter,
-                                     LegacyFewShotPromptFormatter)
+    extract_first_code_block, 
+    extract_sql_from_json,
+)
+from text2sql.engine.prompts import (
+    ESQLCoTPromptFormatter,
+    GenaCoTPromptFormatter,
+    LegacyFewShotPromptFormatter,
+)
 
 
 def get_generator(generator_name, model, post_func):
@@ -39,15 +45,13 @@ def get_generator(generator_name, model, post_func):
     return generator
 
 
-def get_formatter(formatter_name):
+def get_formatter(formatter_name, database_type):
     if formatter_name == "legacy":
-        formatter = LegacyFewShotPromptFormatter(database_type="postgres")
+        formatter = LegacyFewShotPromptFormatter(database_type=database_type)
     elif formatter_name == "ESQLCoT":
-        formatter = ESQLCoTPromptFormatter(database_type="postgres")
+        formatter = ESQLCoTPromptFormatter(database_type=database_type)
     elif formatter_name == "GENACoT":
-        formatter = GenaCoTPromptFormatter()
-    elif formatter_name == "GENACoTZs":
-        formatter = GenaCoTZsPromptFormatter()
+        formatter = GenaCoTPromptFormatter(database_type=database_type)
     else:
         raise Exception(f"No known formatter with the name {formatter_name}")
     return formatter
