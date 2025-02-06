@@ -26,6 +26,7 @@ from text2sql.engine.prompts.constants_v3 import (
      GENA_SQLITE_GUIDELINES,
      GENA_USER_EXAMPLE_TEMPLATE,
      GENA_USER_QUERY_TEMPLATE,
+     GENA_USER_QUERY_NO_DATE_TEMPLATE,
      GENA_ASSISTANT_TEMPLATE
 )
 
@@ -206,12 +207,14 @@ class GenaCoTPromptFormatter(BasePromptFormatter):
             database_type: str,
             few_shot_query_key: str = "nl_en_query",
             few_shot_target_key: str = "sql_query",
-            current_date: str = datetime.datetime.now().strftime("%A, %B %d, %Y")
+            current_date: str = datetime.datetime.now().strftime("%A, %B %d, %Y"),
+            add_date: bool = True,
         ):
         self.database_type = database_type
         self.few_shot_query_key = few_shot_query_key
         self.few_shot_target_key = few_shot_target_key
         self.current_date = current_date
+        self.add_date = add_date
 
     def generate_messages(
             self, 
@@ -241,11 +244,19 @@ class GenaCoTPromptFormatter(BasePromptFormatter):
             messages.append({"role": "user", "content": GENA_USER_EXAMPLE_TEMPLATE.format(user_question=example_query, sql_dialect=self.database_type)})
             messages.append({"role": "assistant", "content": GENA_ASSISTANT_TEMPLATE.format(sql_query=example_sql)})
 
-        query_message = GENA_USER_QUERY_TEMPLATE.format(
-             current_date=self.current_date, 
-             user_question=query, 
-             sql_dialect=self.database_type
-        )
+        if self.add_date:
+            query_message = GENA_USER_QUERY_TEMPLATE.format(
+                current_date=self.current_date, 
+                user_question=query, 
+                sql_dialect=self.database_type
+            )
+        else:
+            query_message = GENA_USER_QUERY_NO_DATE_TEMPLATE.format(
+                current_date=self.current_date, 
+                user_question=query, 
+                sql_dialect=self.database_type
+            )
+
         messages.append({"role": "user", "content": query_message})
         return messages
     

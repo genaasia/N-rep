@@ -62,7 +62,7 @@ def run_pipe_on_dataset(
 
 def run_inference(eval_data, pipe_configuration: PipeConfig, settings: Settings, db_instance: BaseDataset, db_name, database_type, embedder=None, retriever=None):
     # CREATE PROMPT FORMATTER
-    formatter = get_formatter(pipe_configuration.formatter, database_type)
+    formatter = get_formatter(pipe_configuration.formatter, database_type, pipe_configuration.add_date)
 
     # CREATE REPAIR AND REWRITE PROMPT FORMATTER
     repair_formatter = GenaRepairPromptFormatter(database_type=database_type) if pipe_configuration.repair else None

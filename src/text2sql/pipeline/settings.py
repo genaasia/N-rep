@@ -26,12 +26,14 @@ class PipeConfig:
     pipe_name: str
     rewrite: bool = False
     repair: bool = False
+    add_date: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "schema": self.schema,
             "rewrite": self.rewrite,
             "repair": self.repair,
+            "add_date": self.add_date,
             "schema": self.schema,
             "postfunc": self.postfunc,
             "generator": self.generator.to_dict(),
@@ -52,6 +54,7 @@ class PipeConfig:
             formatter=data["formatter"],
             rewrite=data.get("rewrite", False),
             repair=data.get("repair", False),
+            add_date=data.get("add_date", True),
             schema=data["schema"],
             postfunc=data["postfunc"],
             generator=generator,
