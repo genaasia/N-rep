@@ -57,9 +57,9 @@ def get_formatter(formatter_name, database_type):
     return formatter
 
 
-def get_schema_description(schema_name, db_instance):
+def get_schema_description(db_name, schema_name, db_instance):
     schema_description = db_instance.describe_database_schema(
-            os.environ.get("POSTGRES_DB"), mode=schema_name
+            db_name, mode=schema_name
         )
     return schema_description
 

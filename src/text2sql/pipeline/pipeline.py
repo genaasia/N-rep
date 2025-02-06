@@ -159,7 +159,7 @@ class ConsistencyPipeline(Pipeline):
         self,
         formatter: BasePromptFormatter,
         generator,
-        schema_description,
+        schema_description: str | dict,
         generator_config,
         max_retries,
         self_consistency,
@@ -171,6 +171,7 @@ class ConsistencyPipeline(Pipeline):
         question_key: str,
         repair_formatter: BasePromptFormatter | None = None,
         rewrite_formatter: BasePromptFormatter | None = None,
+        db_name_key: str | None = None,
     ):
         self.formatter = formatter
         self.generator = generator
@@ -188,6 +189,7 @@ class ConsistencyPipeline(Pipeline):
         self.rewrite_formatter = rewrite_formatter
 
         self.schema = db_instance.get_database_schema(db_name)
+        self.db_name_key = db_name_key
 
     def _get_filtered_schema_description(self, prediction):
         table_names = get_table_names_from_query(prediction)
@@ -198,7 +200,7 @@ class ConsistencyPipeline(Pipeline):
                 filtered_schema["tables"][table_name] = self.schema["tables"][table_name]
         return schema_to_datagrip_format(self.db_name, filtered_schema)
 
-    def validate_and_update_inferences(self, inference_result: Dict, test_sample: Dict) -> Dict:
+    def validate_and_update_inferences(self, inference_result: Dict, test_sample: Dict, db_name: str) -> Dict:
         """
         Validates each prediction.
         If the results are valid and a rewrite prompt formatter exists, tries to rewrite and improve the SQL prediction.
@@ -206,7 +208,7 @@ class ConsistencyPipeline(Pipeline):
         """
         predictions_new = []
         for prediction, inference_time in inference_result["predictions"]:
-            results = self.db_instance.validate_query(self.db_name, prediction)
+            results = self.db_instance.validate_query(db_name, prediction)
             if self.rewrite_formatter or self.repair_formatter:
                 filtered_schema_description = self._get_filtered_schema_description(prediction)
 
@@ -222,7 +224,7 @@ class ConsistencyPipeline(Pipeline):
                     repaired_prediction, rewrite_inference_time = self.run_rewrite(
                         test_sample, prediction, filtered_schema_description
                     )
-                    repaired_results = self.db_instance.validate_query(self.db_name, prediction)
+                    repaired_results = self.db_instance.validate_query(db_name, prediction)
                     if repaired_results.get("validated"):
                         results = repaired_results
                 results = self.db_instance.normalize_db_query_results(results)
@@ -236,7 +238,7 @@ class ConsistencyPipeline(Pipeline):
                         test_sample, prediction, error_message, filtered_schema_description
                     )
                     if repaired_prediction:
-                        repaired_results = self.db_instance.validate_query(self.db_name, repaired_prediction)
+                        repaired_results = self.db_instance.validate_query(db_name, repaired_prediction)
                     if repaired_prediction and repaired_results.get("validated"):
                         repaired_results = self.db_instance.normalize_db_query_results(repaired_results)
                         obj.update(
@@ -302,11 +304,23 @@ class ConsistencyPipeline(Pipeline):
         Runs the full pipeline:
         generating predictions for a sample, validating, attempting to update by rewrite or repair.
         """
+        if isinstance(self.schema_description, dict):
+            if self.db_name_key:
+                db_name = test_sample[self.db_name_key]
+                schema_description = self.schema_description[db_name]
+            else:
+                raise Exception(
+                    "Pipeline attribute schema_description is a dict but a db_name_key is not provided."
+                )
+        else:
+            db_name = self.db_name
+            schema_description = self.schema_description
+
         inference_result = single_sample_pipe(
             test_sample,
             self.formatter,
             self.generator,
-            self.schema_description,
+            schema_description,
             self.generator_config,
             self.question_key,
             self.max_retries,
@@ -315,4 +329,4 @@ class ConsistencyPipeline(Pipeline):
             self.retriever,
             self.top_k,
         )
-        return self.validate_and_update_inferences(inference_result, test_sample)
+        return self.validate_and_update_inferences(inference_result, test_sample, db_name)

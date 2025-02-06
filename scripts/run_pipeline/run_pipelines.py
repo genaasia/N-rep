@@ -76,7 +76,22 @@ def run_inference(eval_data, pipe_configuration, settings: Settings, db_instance
     )
 
     # GET SCHEMA DESCRIPTION
-    schema_description = get_schema_description(pipe_configuration.schema, db_instance)
+    ## If the benchmark mode is on we will cache all schema descriptions in the schema_description dict
+    ## If we are evaluating a single dataset like packative, schema_description will be a string
+    if settings.benchmark:
+        if settings.db_name_key:
+            schema_description = {}
+            for datum in eval_data:
+                db_name = datum[settings.db_name_key]
+                if db_name not in schema_description:
+                    schema_description[db_name] = get_schema_description(db_name, pipe_configuration.schema, db_instance)
+        else:
+            raise Exception(
+                "Pipeline attribute schema_description is a dict but a db_name_key is not provided."
+            )
+    else:
+        schema_description = get_schema_description(os.environ.get("POSTGRES_DB"), pipe_configuration.schema, db_instance)
+
 
     # CREATE PIPELINE
     max_retry = 3
@@ -94,7 +109,8 @@ def run_inference(eval_data, pipe_configuration, settings: Settings, db_instance
         db_name,
         settings.question_key,
         repair_formatter,
-        rewrite_formatter
+        rewrite_formatter,
+        settings.db_name_key,
     )
 
     # RUN PIPELINE OVER DATASET
@@ -252,7 +268,11 @@ def main():
         )
         for idx in range(len(packative_test_data)):
             if not "api_execution_result" in packative_test_data[idx]:
-                result = db_instance.validate_query(os.environ.get("POSTGRES_DB"), packative_test_data[idx][settings.target_sql_key])
+                if settings.benchmark:
+                    db_name = packative_test_data[idx][settings.db_name_key]
+                else:
+                    db_name = os.environ.get("POSTGRES_DB")
+                result = db_instance.validate_query(db_name, packative_test_data[idx][settings.target_sql_key])
                 if result["validated"]:
                     packative_test_data[idx]["api_execution_result"] = result["execution_result"]
                 else:

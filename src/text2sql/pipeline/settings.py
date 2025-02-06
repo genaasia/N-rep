@@ -74,6 +74,8 @@ class Settings:
     database_type: str
     question_key: str
     target_sql_key: str
+    db_name_key: str
+    benchmark: bool
     batch_size: int
     max_workers: int
     pipe_configurations: List[PipeConfig]
@@ -103,6 +105,8 @@ class Settings:
             database_type=config["database_type"],
             question_key=config["question_key"],
             target_sql_key=config["target_sql_key"],
+            db_name_key=config["db_name_key"],
+            benchmark=config["benchmark"],
             batch_size=config["batch_size"],
             max_workers=config["max_workers"],
             pipe_configurations=pipe_configs,
@@ -121,6 +125,8 @@ class Settings:
             "database_type": str(self.database_type),
             "question_key": str(self.question_key),
             "target_sql_key": str(self.target_sql_key),
+            "db_name_key": str(self.db_name_key),
+            "benchmark": str(self.benchmark),
             "batch_size": self.batch_size,
             "pipe_configurations": [
                 {
