@@ -36,21 +36,21 @@ from evaluation.run_eval import run_eval
 
 def run_pipe_on_dataset(
     pipeline,
-    packative_test_data,
+    test_data,
     batch_size=None,
     max_workers=4,
 ):
     test_results = []
 
     if not batch_size:
-        batch_size = len(packative_test_data)
+        batch_size = len(test_data)
 
     logger.debug(f"Will run pipeline over {batch_size} rows!")
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = list(
             tqdm.tqdm(
-                executor.map(pipeline.run, packative_test_data[:batch_size]),
+                executor.map(pipeline.run, test_data[:batch_size]),
                 total=batch_size,
                 desc="Processing samples",
             )
@@ -257,10 +257,10 @@ def main():
         )
 
     if args.update_embeddings and args.run_inference:
-        packative_train_data = pd.read_csv(settings.train_file_path).to_dict(orient="records")
-        # packative_train_data = [datum for datum in packative_train_data if datum["validated"]]
+        train_data = pd.read_csv(settings.train_file_path).to_dict(orient="records")
+        # train_data = [datum for datum in train_data if datum["validated"]]
         
-        train_queries = [example["nl_en_query"] for example in packative_train_data]
+        train_queries = [example["nl_en_query"] for example in train_data]
         print(f"{len(train_queries)=}")
         if not os.path.isfile(settings.train_embedding_file_path):
             print(f"generating train embeddings and saving to '{settings.train_embedding_file_path}'")
@@ -272,7 +272,7 @@ def main():
 
         _ = retriever.populate_collection(
                 embeddings=train_embeddings,
-                data=packative_train_data,
+                data=train_data,
             )
 
     score_cache = {}
@@ -288,24 +288,24 @@ def main():
                 f"Extension {extension} is not recognized for the file {settings.test_file_path}"
             )
 
-        packative_test_data = reader(settings.test_file_path).to_dict(
+        test_data = reader(settings.test_file_path).to_dict(
             orient="records"
-        )
-        for idx in range(len(packative_test_data)):
-            if not "api_execution_result" in packative_test_data[idx]:
+        )[:settings.batch_size]
+        for idx in range(len(test_data)):
+            if not "api_execution_result" in test_data[idx]:
                 if settings.benchmark:
-                    db_name = packative_test_data[idx][settings.db_name_key]
+                    db_name = test_data[idx][settings.db_name_key]
                 else:
                     db_name = os.environ.get("POSTGRES_DB")
-                result = db_instance.validate_query(db_name, packative_test_data[idx][settings.target_sql_key])
+                result = db_instance.validate_query(db_name, test_data[idx][settings.target_sql_key])
                 if result["validated"]:
-                    packative_test_data[idx]["api_execution_result"] = result["execution_result"]
+                    test_data[idx]["api_execution_result"] = result["execution_result"]
                 else:
                     logger.error(
                         "api_execution_result is empty and the golden query is not valid!\nSomething seems wrong with your data"
                     )
         if args.subset:
-            packative_test_data = random.sample(packative_test_data, int(args.subset))
+            test_data = random.sample(test_data, int(args.subset))
         for pipe_configuration in settings.pipe_configurations:
             logger.debug(f"Running configuration {pipe_configuration.pipe_name}")
             logger.debug(
@@ -313,7 +313,7 @@ def main():
             )
 
             test_results = run_inference(
-                packative_test_data,
+                test_data,
                 pipe_configuration,
                 settings,
                 db_instance,
