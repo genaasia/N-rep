@@ -32,7 +32,11 @@ def run_eval(predicted_data, target_data, score_cache):
                 continue
 
             target_sql = target_datum["sql_query"]
-            target_execution = literal_eval(target_datum["api_execution_result"])
+
+            if isinstance(target_datum["api_execution_result"], str):
+                target_execution = literal_eval(target_datum["api_execution_result"])
+            else:
+                target_execution = target_datum["api_execution_result"]
 
             if method == "upper_bound":
                 (

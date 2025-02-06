@@ -235,7 +235,18 @@ def main():
 
     score_cache = {}
     if args.run_inference:
-        packative_test_data = pd.read_csv(settings.test_file_path).to_dict(
+        _, extension = os.path.splitext(settings.test_file_path)
+
+        if extension == ".json":
+            reader = pd.read_json
+        elif extension == ".csv":
+            reader = pd.read_csv
+        else:
+            raise Exception(
+                f"Extension {extension} is not recognized for the file {settings.test_file_path}"
+            )
+
+        packative_test_data = reader(settings.test_file_path).to_dict(
             orient="records"
         )
         if args.subset:
