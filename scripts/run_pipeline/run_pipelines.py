@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("../../src")
+# sys.path.append("../../src")
 from text2sql import hello
 
 assert hello.message == "hello, world!", "Something went wrong importing text2sql :("
@@ -18,7 +18,7 @@ import pandas as pd
 import tqdm
 from dotenv import load_dotenv
 from loguru import logger
-from text2sql.data import PostgresDataset
+from text2sql.data import PostgresDataset, SqliteDataset, BaseDataset
 from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
@@ -57,7 +57,7 @@ def run_pipe_on_dataset(
     return test_results
 
 
-def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name, database_type, embedder=None, retriever=None):
+def run_inference(eval_data, pipe_configuration, settings, db_instance: BaseDataset, db_name, database_type, embedder=None, retriever=None):
     # CREATE PROMPT FORMATTER
     formatter = get_formatter(pipe_configuration.formatter, database_type)
 
@@ -186,17 +186,19 @@ def main():
         logger.debug(f"Folder {logs_folder} doesn't exist, creating it now!")
     logger.add(logs_file_path)
 
-    # LOAD DB AND CHECK SANITY
-    packative_dataset = PostgresDataset(
-        os.environ.get("POSTGRES_HOST"),
-        os.environ.get("POSTGRES_PORT"),
-        os.environ.get("POSTGRES_USER"),
-        os.environ.get("POSTGRES_PASSWORD"),
-    )
-    sanity_check = packative_dataset.query_database(
-        os.environ.get("POSTGRES_DB"), "SELECT COUNT(DISTINCT bank) FROM bank_account;"
-    )
-    assert sanity_check == [{"count": 10}]
+    if settings.database_type == "postgres":
+        db_instance = PostgresDataset(
+            os.environ.get("POSTGRES_HOST"),
+            os.environ.get("POSTGRES_PORT"),
+            os.environ.get("POSTGRES_USER"),
+            os.environ.get("POSTGRES_PASSWORD"),
+        )
+    elif settings.database_type == "sqlite":
+        db_instance = SqliteDataset(os.environ.get("SQLITE_DB_PATH"))
+    else:
+        raise Exception(
+                f"Databse type {settings.database_type } is not recognized"
+            ) 
 
 
     retriever = WeaviateRetriever(
@@ -248,7 +250,7 @@ def main():
                 packative_test_data,
                 pipe_configuration,
                 settings,
-                packative_dataset,
+                db_instance,
                 os.environ.get("POSTGRES_DB"),
                 settings.database_type,
                 embedder,
