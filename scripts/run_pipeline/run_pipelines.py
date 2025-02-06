@@ -1,4 +1,5 @@
 import sys
+import copy
 
 # sys.path.append("../../src")
 from text2sql import hello
@@ -23,6 +24,8 @@ from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
 from text2sql.engine.prompts import GenaRepairPromptFormatter, GenaRewritePromptFormatter
+from text2sql.engine.generation import identity
+from text2sql.pipeline.settings import PipeConfig
 
 load_dotenv()
 
@@ -57,7 +60,7 @@ def run_pipe_on_dataset(
     return test_results
 
 
-def run_inference(eval_data, pipe_configuration, settings: Settings, db_instance: BaseDataset, db_name, database_type, embedder=None, retriever=None):
+def run_inference(eval_data, pipe_configuration: PipeConfig, settings: Settings, db_instance: BaseDataset, db_name, database_type, embedder=None, retriever=None):
     # CREATE PROMPT FORMATTER
     formatter = get_formatter(pipe_configuration.formatter, database_type)
 
@@ -72,7 +75,7 @@ def run_inference(eval_data, pipe_configuration, settings: Settings, db_instance
     generator = get_generator(
         pipe_configuration.generator.name,
         pipe_configuration.generator.model,
-        post_func,
+        identity,
     )
 
     # GET SCHEMA DESCRIPTION
@@ -108,6 +111,7 @@ def run_inference(eval_data, pipe_configuration, settings: Settings, db_instance
         db_instance,
         db_name,
         settings.question_key,
+        post_func,
         repair_formatter,
         rewrite_formatter,
         settings.db_name_key,
@@ -123,8 +127,27 @@ def run_inference(eval_data, pipe_configuration, settings: Settings, db_instance
     return test_results
 
 
+def get_experiment_format(test_results):
+    experiment_results = []
+    for test_result in test_results:
+        experiment_result = copy.deepcopy(test_result)
+        del experiment_result["api_execution_result"]
+        del experiment_result["predictions"]
+        del experiment_result["messages"]
+        del experiment_result["llm_output"]
+        flat_keys = ["predicted_sql", "sql_match_score", "execution_match_score", "intent_score", "soft_f1_score"]
+        for key in flat_keys:
+            experiment_result[key]=experiment_result["highest_voted_valid"][key]
+        del experiment_result["highest_voted_valid"]
+        experiment_results.append(experiment_result)
+    return experiment_results
+
+
 def save_results(test_results, eval_results, file_name, settings):
+    experiment_results = get_experiment_format(test_results)
+
     outputs_file_path = os.path.join(settings.outputs_folder, f"{file_name}.json")
+    experiments_file_path = os.path.join(settings.outputs_folder, f"{file_name}_experiment_format.json")
     if not os.path.exists(settings.outputs_folder):
         os.mkdir(settings.outputs_folder)
         logger.debug(
@@ -132,6 +155,8 @@ def save_results(test_results, eval_results, file_name, settings):
         )
     with open(outputs_file_path, "w") as f:
         json.dump(test_results, f, indent=2)
+    with open(experiments_file_path, "w") as f:
+        json.dump(experiment_results, f, indent=2)
 
     results_file_path = os.path.join(settings.results_folder, f"{file_name}.json")
     if not os.path.exists(settings.results_folder):

@@ -26,6 +26,7 @@ def single_sample_pipe(
     schema_description: str,
     generator_config,
     question_key: str,
+    post_func,
     max_retries: int = 3,
     self_consistency: int = 1,
     embedder=None,
@@ -36,6 +37,8 @@ def single_sample_pipe(
     output = test_sample.copy()
     try:
         sample_query = test_sample[question_key]
+        if "evidence" in test_sample:
+            sample_query = sample_query + "\nHint:" + test_sample["evidence"]
 
         # Create chat messages
         if embedder and retriever:
@@ -59,7 +62,8 @@ def single_sample_pipe(
         for _ in range(self_consistency):
             for attempt in range(max_retries):
                 try:
-                    prediction, inference_time = generate_and_measure(generator.generate, messages, generator_config)
+                    prediction_all, inference_time = generate_and_measure(generator.generate, messages, generator_config)
+                    prediction = post_func(prediction_all)
                     prediction = extract_sql_query(prediction)
                     prediction = normalize_sql(prediction)
                     predictions_not_grouped.append((prediction, inference_time))
@@ -79,6 +83,8 @@ def single_sample_pipe(
             return output
 
         output["predictions"] = predictions_not_grouped
+        output["messages"] = messages
+        output["llm_output"] = prediction_all
         return output
 
     except Exception as e:
@@ -169,6 +175,7 @@ class ConsistencyPipeline(Pipeline):
         db_instance,
         db_name,
         question_key: str,
+        post_func,
         repair_formatter: BasePromptFormatter | None = None,
         rewrite_formatter: BasePromptFormatter | None = None,
         db_name_key: str | None = None,
@@ -190,6 +197,7 @@ class ConsistencyPipeline(Pipeline):
 
         self.schema = db_instance.get_database_schema(db_name)
         self.db_name_key = db_name_key
+        self.post_func = post_func
 
     def _get_filtered_schema_description(self, prediction):
         table_names = get_table_names_from_query(prediction)
@@ -323,6 +331,7 @@ class ConsistencyPipeline(Pipeline):
             schema_description,
             self.generator_config,
             self.question_key,
+            self.post_func,
             self.max_retries,
             self.self_consistency,
             self.embedder,
