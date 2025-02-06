@@ -11,6 +11,9 @@ collection_name: packative_collection_1
 batch_size: null
 max_workers: 4
 
+question_key: question
+target_sql_key: SQL
+
 pipe_configurations:
   - formatter: GENACoT
     rewrite: True

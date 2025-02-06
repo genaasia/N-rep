@@ -25,6 +25,7 @@ def single_sample_pipe(
     generator,
     schema_description: str,
     generator_config,
+    question_key: str,
     max_retries: int = 3,
     self_consistency: int = 1,
     embedder=None,
@@ -34,7 +35,7 @@ def single_sample_pipe(
     """Process a single test sample using threads."""
     output = test_sample.copy()
     try:
-        sample_query = test_sample["nl_en_query"]  # Should come from config file
+        sample_query = test_sample[question_key]
 
         # Create chat messages
         if embedder and retriever:
@@ -99,12 +100,13 @@ def repair_rewrite_pipe(
     schema_description: str,
     table_text: str,
     generator_config,
+    question_key: str,
     error_message: str | None = None,
     max_retries: int = 3,
 ) -> Dict:
     """Process a single test sample using threads."""
     try:
-        sample_query = test_sample["nl_en_query"]  # Should come from config file
+        sample_query = test_sample[question_key]
 
         if error_message:
             messages = formatter.generate_messages(
@@ -166,6 +168,7 @@ class ConsistencyPipeline(Pipeline):
         top_k,
         db_instance,
         db_name,
+        question_key: str,
         repair_formatter: BasePromptFormatter | None = None,
         rewrite_formatter: BasePromptFormatter | None = None,
     ):
@@ -180,6 +183,7 @@ class ConsistencyPipeline(Pipeline):
         self.top_k = top_k
         self.db_instance = db_instance
         self.db_name = db_name
+        self.question_key = question_key
         self.repair_formatter = repair_formatter
         self.rewrite_formatter = rewrite_formatter
 
@@ -268,6 +272,7 @@ class ConsistencyPipeline(Pipeline):
             self.schema_description,
             filtered_schema_description,
             self.generator_config,
+            self.question_key,
             error_message,
             self.max_retries,
         )
@@ -287,6 +292,7 @@ class ConsistencyPipeline(Pipeline):
             self.schema_description,
             filtered_schema_description,
             self.generator_config,
+            self.question_key,
             max_retries=self.max_retries,
         )
         return rewritten_prediction, inference_time
@@ -302,6 +308,7 @@ class ConsistencyPipeline(Pipeline):
             self.generator,
             self.schema_description,
             self.generator_config,
+            self.question_key,
             self.max_retries,
             self.self_consistency,
             self.embedder,

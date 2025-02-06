@@ -57,7 +57,7 @@ def run_pipe_on_dataset(
     return test_results
 
 
-def run_inference(eval_data, pipe_configuration, settings, db_instance: BaseDataset, db_name, database_type, embedder=None, retriever=None):
+def run_inference(eval_data, pipe_configuration, settings: Settings, db_instance: BaseDataset, db_name, database_type, embedder=None, retriever=None):
     # CREATE PROMPT FORMATTER
     formatter = get_formatter(pipe_configuration.formatter, database_type)
 
@@ -92,6 +92,7 @@ def run_inference(eval_data, pipe_configuration, settings, db_instance: BaseData
         pipe_configuration.generator.top_k,
         db_instance,
         db_name,
+        settings.question_key,
         repair_formatter,
         rewrite_formatter
     )
@@ -284,7 +285,7 @@ def main():
             if args.run_eval:
                 file_name = f"{pipe_configuration.pipe_name}_{formatted_date}"
 
-                eval_results = run_eval(test_results, test_results, score_cache)
+                eval_results = run_eval(test_results, test_results, score_cache, settings.target_sql_key)
 
                 save_results(test_results, eval_results, file_name, settings)
 
@@ -308,7 +309,7 @@ def main():
         if args.run_eval:
             file_name = f"{inference_file_name}_{formatted_date}"
 
-            eval_results = run_eval(test_results, test_results, score_cache)
+            eval_results = run_eval(test_results, test_results, score_cache, settings.target_sql_key)
 
             save_results(test_results, eval_results, file_name, settings)
 

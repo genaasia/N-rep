@@ -9,7 +9,7 @@ from .eval_utils import (
 )
 
 
-def run_eval(predicted_data, target_data, score_cache):
+def run_eval(predicted_data, target_data, score_cache, target_sql_key):
     all_methods = {}
     # for method in ["highest_voted_valid", "highest_voted", "upper_bound", "lower_bound"]:
     for method in ["highest_voted_valid"]:
@@ -31,7 +31,7 @@ def run_eval(predicted_data, target_data, score_cache):
                 all_methods[method]["valids"].append(False)
                 continue
 
-            target_sql = target_datum["sql_query"]
+            target_sql = target_datum[target_sql_key]
 
             if isinstance(target_datum["api_execution_result"], str):
                 target_execution = literal_eval(target_datum["api_execution_result"])
