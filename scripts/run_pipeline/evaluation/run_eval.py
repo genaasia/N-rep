@@ -1,5 +1,5 @@
 from ast import literal_eval
-
+import tqdm
 import numpy as np
 from .eval_utils import (
     upper_bound_eval,
@@ -20,7 +20,7 @@ def run_eval(predicted_data, target_data, score_cache, target_sql_key):
             "soft_f1_scores": [],
             "valids": [],
         }
-        for i, predicted_datum in enumerate(predicted_data):
+        for i, predicted_datum in enumerate(tqdm.tqdm(predicted_data)):
             target_datum = target_data[i]
             predictions = predicted_datum["predictions"]
             if not predictions:

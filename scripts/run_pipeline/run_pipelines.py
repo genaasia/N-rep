@@ -292,7 +292,7 @@ def main():
                     orient="records"
         )
         if settings.batch_size:
-            test_data = test_data[settings.batch_size]
+            test_data = test_data[:settings.batch_size]
         for idx in tqdm.trange(len(test_data)):
             if not "api_execution_result" in test_data[idx]:
                 if settings.benchmark:
@@ -306,8 +306,7 @@ def main():
                     logger.error(
                         "api_execution_result is empty and the golden query is not valid!\nSomething seems wrong with your data"
                     )
-        # TODO: make this better, don't overwrite original data
-        with open(settings.test_file_path, "w") as f:
+        with open(str(settings.test_file_path).replace(".json", ".withdata.json"), "w") as f:
             json.dump(test_data, f, indent=2)
         if args.subset:
             test_data = random.sample(test_data, int(args.subset))

@@ -85,7 +85,7 @@ GENA_COT_PROMPT_TEMPLATE = """INSTRUCTIONS:
 You write SQL queries for a {sql_dialect} database. 
 Users are querying their company database, and your task is to assist by generating valid SQL queries strictly adhering to the database schema provided.  
 
-The user will provide you with a query intent and an SQL template. 
+The user will provide you with a query intent. 
 
 Translate the user's request into one valid {sql_dialect} query. SQL should be written as a markdown code block:  
 For example:  

@@ -1,5 +1,7 @@
+import atexit
 import glob
 import os
+import sqlite3
 from uuid import UUID
 from decimal import Decimal
 from datetime import datetime, date, time, timedelta
@@ -10,7 +12,7 @@ import sqlalchemy
 
 from sqlalchemy import create_engine, inspect, text
 
-from text2sql.data.sqlite_functions import  get_sqlite_database_file, query_sqlite_database, get_sqlite_schema
+from text2sql.data.sqlite_functions import  get_sqlite_database_file, query_sqlite_database, get_sqlite_schema, query_sqlite_database_from_connection
 from text2sql.data.schema_to_text import schema_to_basic_format, schema_to_sql_create, schema_to_datagrip_format
 from text2sql.data.mysql_functions import get_mysql_schema
 from text2sql.data.postgres_functions import get_postgresql_schema
@@ -218,6 +220,26 @@ class PostgresDataset(BaseDataset):
         return [dict(r._mapping) for r in result]
     
 
+
+# class DBConnectionManager:
+#     def __init__(self):
+#         self.connections = {}
+#         atexit.register(self.close_all)
+    
+#     def get_connection(self, db_path):
+#         if db_path not in self.connections:
+#             conn = sqlite3.connect(f'file:{db_path}?mode=ro')
+#             conn.execute('PRAGMA cache_size = -2000000')  # Set 2GB cache
+#             conn.row_factory = sqlite3.Row
+#             self.connections[db_path] = conn
+#         return self.connections[db_path]
+    
+#     def close_all(self):
+#         for conn in self.connections.values():
+#             conn.close()
+#         self.connections.clear()
+
+
 class SqliteDataset(BaseDataset):
     def __init__(self, base_data_path: str):
         """initialize an sql dataset manager
@@ -231,6 +253,7 @@ class SqliteDataset(BaseDataset):
         """
         self.base_data_path = base_data_path
         self.databases = list_supported_databases(base_data_path)
+        # self.manager = DBConnectionManager()
         self.supported_modes = ["basic", "basic_types", "basic_relations", "basic_types_relations", "sql", "datagrip"]
 
     def get_databases(self) -> list[str]:
@@ -274,4 +297,6 @@ class SqliteDataset(BaseDataset):
         
     def query_database(self, database_name: str, query: str) -> list[dict]:
         """return the results of the query as a list of dictionaries"""
+        # connection = self.manager.get_connection(self.get_database_path(database_name))
+        # return query_sqlite_database_from_connection(connection, query)
         return query_sqlite_database(self.base_data_path, database_name, query)

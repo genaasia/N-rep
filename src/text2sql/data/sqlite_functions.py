@@ -31,6 +31,15 @@ def query_sqlite_database(base_dir: str, database: str, sql_query: str) -> list[
     return json_result
 
 
+@lru_cache(maxsize=1024)
+def query_sqlite_database_from_connection(connection, sql_query: str) -> list[dict]:
+    """query sqlite database and return results"""
+    cursor = connection.cursor()
+    result = cursor.execute(sql_query)
+    json_result = [dict(r) for r in result.fetchall()]
+    return json_result
+
+
 def get_sqlite_schema(base_dir: str, database: str) -> dict[str, Any]:
     """get sqlite schema, columns, relations as a dictionary"""
     database_path = get_sqlite_database_file(base_dir=base_dir, database=database)
