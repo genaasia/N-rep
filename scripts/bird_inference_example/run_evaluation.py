@@ -73,9 +73,6 @@ if __name__=="__main__":
     soft_f1_scores = [r["soft_f1"] for r in prediction_output_list]
     intent_match_scores = [int(r["intent_match"]) for r in prediction_output_list]
     execution_match_scores = [int(r["execution_match"]) for r in prediction_output_list]
-    print(f"Soft F1        : {np.mean(soft_f1_scores):.3f}")
-    print(f"Intent Match   : {np.mean(intent_match_scores):.3f}")
-    print(f"Execution Match: {np.mean(execution_match_scores):.3f}")
 
     # merge into data and save results as csv
     for i, row in enumerate(dev_data):
@@ -83,3 +80,13 @@ if __name__=="__main__":
     df = pd.DataFrame(dev_data)
     output_file = f"{args.prediction_file.replace('.json', '')}_evaluation.csv"
     df.to_csv(output_file, index=False)
+
+    output_summary_file = f"{args.prediction_file.replace('.json', '')}_summary.txt"
+    with open(output_summary_file, "w") as f:
+        f.write(f"Soft F1        : {np.mean(soft_f1_scores):.3f}\n")
+        f.write(f"Intent Match   : {np.mean(intent_match_scores):.3f}\n")
+        f.write(f"Execution Match: {np.mean(execution_match_scores):.3f}\n")
+    print(f"Soft F1        : {np.mean(soft_f1_scores):.3f}")
+    print(f"Intent Match   : {np.mean(intent_match_scores):.3f}")
+    print(f"Execution Match: {np.mean(execution_match_scores):.3f}")
+
