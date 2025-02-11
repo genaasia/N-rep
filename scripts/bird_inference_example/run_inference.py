@@ -35,7 +35,7 @@ def extract_first_code_block(text: str) -> str:
     return results[0]
 
 
-@retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+@retry(wait=wait_random_exponential(min=5, max=120), stop=stop_after_attempt(10))
 def inference_gpt4o(
         client: AzureOpenAI, 
         messages: list[dict], 
