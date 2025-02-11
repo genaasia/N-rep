@@ -57,6 +57,7 @@ parser.add_argument("--weaviate-grpc-port", type=int, default=50051, help="local
 # parser.add_argument("--batch_size", type=int, default=8, help="request batch size, default 8")
 # parser.add_argument("--timeout", type=int, default=60, help="request timeout in seconds, default 60")
 # parser.add_argument("--sleep_ms", type=int, default=10, help="request sleep time in ms, default 10")
+parser.add_argument("--sleep_ms", type=int, default=20, help="request sleep time in ms, default 10")
 args = parser.parse_args()
 
 

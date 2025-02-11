@@ -1,5 +1,6 @@
 import atexit
 import json
+import time
 import uuid
 from abc import ABC, abstractmethod
 
@@ -137,6 +138,7 @@ class WeaviateRetriever(BaseRetriever):
             properties: list[Property] | None = None,
             norm: bool = False, 
             verbose: bool = True,
+            sleep_ms: int = 100,
         ) -> dict:
         """add data to the weaviate collection"""
         if len(embeddings) != len(data):
@@ -165,6 +167,8 @@ class WeaviateRetriever(BaseRetriever):
                     properties=datum,
                     vector=embedding
                 )
+                if sleep_ms > 0:
+                    time.sleep(sleep_ms / 1000)
             if len(collection.batch.failed_objects) > 0:
                 raise Exception(f"Failed to import {len(collection.batch.failed_objects)} objects")
         return self.get_collection_info()
@@ -200,6 +204,13 @@ class WeaviateRetriever(BaseRetriever):
             for obj in response.objects
         ]
         return results
+    
+    # close the client on exit
+    def __del__(self):
+        if self.client:
+            print("closing weaviate client...")
+            self.client.close()
+            print("weaviate client closed")
 
 
 class WeaviateCloudRetriever(WeaviateRetriever):
