@@ -1,3 +1,4 @@
+import atexit
 import json
 import uuid
 from abc import ABC, abstractmethod
@@ -10,7 +11,9 @@ import weaviate.classes as wvc
 from sklearn.metrics.pairwise import distance_metrics, pairwise_distances
 from sklearn.preprocessing import normalize
 from weaviate.classes.config import Property, DataType
+from weaviate.classes.init import Auth
 from weaviate.classes.query import MetadataQuery
+
 from weaviate.util import generate_uuid5
 
 
@@ -104,14 +107,14 @@ class WeaviateRetriever(BaseRetriever):
         self.host = host
         self.port = port
         self.grpc_port = grpc_port
-        self.client: weaviate.Client = self._get_weaviate_client(host, port, grpc_port)
+        self.client: weaviate.Client = self._get_weaviate_client()
 
-    def _get_weaviate_client(self, host: str, port: int, grpc_port: int) -> weaviate.Client:
+    def _get_weaviate_client(self) -> weaviate.Client:
         """get weaviate client"""
         client: weaviate.Client = weaviate.connect_to_local(
-            host=host,
-            port=port,
-            grpc_port=grpc_port,
+            host=self.host,
+            port=self.port,
+            grpc_port=self.grpc_port,
         )
         if not client.is_ready():
             raise Exception("weaviate client not ready")
@@ -131,6 +134,7 @@ class WeaviateRetriever(BaseRetriever):
             embeddings: list[list[float]] | np.ndarray, 
             data: list[dict], 
             delete_existing: bool = False, 
+            properties: list[Property] | None = None,
             norm: bool = False, 
             verbose: bool = True,
         ) -> dict:
@@ -142,7 +146,10 @@ class WeaviateRetriever(BaseRetriever):
         if delete_existing:
             self.client.collections.delete(self.collection_name)
         if not self.client.collections.exists(self.collection_name):
-            properties = weaviate_properties_from_dict(data[0])
+            if not properties:
+                if verbose:
+                    print("Inferring properties from data sample...")
+                properties = weaviate_properties_from_dict(data[0])
             self._create_weaviate_collection(properties)
         collection = self.client.collections.get(self.collection_name)
         with collection.batch.dynamic() as batch:
@@ -193,3 +200,29 @@ class WeaviateRetriever(BaseRetriever):
             for obj in response.objects
         ]
         return results
+
+
+class WeaviateCloudRetriever(WeaviateRetriever):
+    
+    def __init__(self, cluster_url: str, auth_credentials: str, collection_name: str):
+        self.collection_name = collection_name
+        self.cluster_url = cluster_url
+        self.auth_credentials = auth_credentials
+        self.client: weaviate.Client = self._get_weaviate_client()
+
+    def _get_weaviate_client(self) -> weaviate.Client:
+        """get weaviate client"""
+        client: weaviate.Client = weaviate.connect_to_weaviate_cloud(
+            cluster_url=self.cluster_url,
+            auth_credentials=Auth.api_key(self.auth_credentials),
+        )
+        if not client.is_ready():
+            raise Exception("weaviate client not ready")
+        return client
+    
+    # close the client on exit
+    def __del__(self):
+        if self.client:
+            print("closing weaviate client...")
+            self.client.close()
+            print("weaviate client closed")

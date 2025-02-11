@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 import json
+import time
 import tqdm
 
 from loguru import logger
@@ -12,9 +13,10 @@ from text2sql.engine.clients import get_azure_client, get_bedrock_client, get_co
 
 
 class BaseEmbedder(ABC):
-    def __init__(self, batch_size: int = 8, max_chars: int = 1024):
+    def __init__(self, batch_size: int = 8, max_chars: int = 1024, sleep_ms: int = 0):
         self.batch_size = batch_size
         self.max_chars = max_chars
+        self.sleep_ms: int = 0
 
     @abstractmethod
     def _embed_batch(self, batch_samples: list[str]) -> list[list[float]]:
@@ -31,6 +33,8 @@ class BaseEmbedder(ABC):
             batch_inputs = [text[: self.max_chars] for text in samples[i : i + self.batch_size]]
             batch_embeddings = self._embed_batch(batch_inputs)
             embeddings.extend(batch_embeddings)
+            if self.sleep_ms:
+                time.sleep(self.sleep_ms / 1000)
         return embeddings
 
     def embed_text(self, text: str) -> list[float]:
@@ -55,6 +59,7 @@ class AzureEmbedder(BaseEmbedder):
         model: str,
         batch_size: int = 8,
         max_chars: int = 1024,
+        sleep_ms: int = 0,
         **kwargs,
     ):
         """embed texts using Azure OpenAI API
@@ -66,6 +71,7 @@ class AzureEmbedder(BaseEmbedder):
             model (str): azure model deployment name
             batch_size (int, optional): batch size. Defaults to 8.
             max_chars (int, optional): max chars. Defaults to 1024.
+            sleep_ms (int, optional): sleep time in ms. Defaults to 0.
             kwargs: additional azure client specific arguments
         """
         self.api_key = api_key
@@ -74,6 +80,7 @@ class AzureEmbedder(BaseEmbedder):
         self.model = model
         self.batch_size = batch_size
         self.max_chars = max_chars
+        self.sleep_ms = sleep_ms
         self.client: AzureOpenAI = get_azure_client(
             api_key=self.api_key,
             api_version=self.api_version,
@@ -102,6 +109,7 @@ class BedrockCohereEmbedder(BaseEmbedder):
         service_name: str = "bedrock-runtime",
         batch_size: int = 8,
         max_chars: int = 1024,
+        sleep_ms: int = 0,
     ):
         """embed texts using Cohere embeddings on Amazon Bedrock API
 
@@ -113,6 +121,7 @@ class BedrockCohereEmbedder(BaseEmbedder):
             service_name (str, optional): bedrock service name. Defaults to "bedrock-runtime".
             batch_size (int, optional): batch size. Defaults to 8.
             max_chars (int, optional): max chars. Defaults to 1024.
+            sleep_ms (int, optional): sleep time in ms. Defaults to 0.
         """
         self.region_name = region_name
         self.service_name = service_name
@@ -125,6 +134,8 @@ class BedrockCohereEmbedder(BaseEmbedder):
             service_name=self.service_name,
             region_name=self.region_name,
         )
+        self.batch_size = batch_size
+        self.sleep_ms = sleep_ms
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
     def _embed_batch(self, batch_samples: list[str]) -> list[list[float]]:
@@ -160,6 +171,7 @@ class BedrockTitanv2Embedder(BaseEmbedder):
         service_name: str = "bedrock-runtime",
         batch_size: int = 1,
         max_chars: int = 1024,
+        sleep_ms: int = 0,
     ):
         """embed texts using Titan v2 embeddings on Amazon Bedrock API
 
@@ -172,6 +184,7 @@ class BedrockTitanv2Embedder(BaseEmbedder):
             service_name (str, optional): bedrock service name. Defaults to "bedrock-runtime".
             batch_size (int, optional): batch size - must be 1 for titan. Defaults to 1.
             max_chars (int, optional): max chars. Defaults to 1024.
+            sleep_ms (int, optional): sleep time in ms. Defaults to 0.
         """
         if batch_size != 1:
             logger.warning("batch_size is set to 1 for Titan v2 embeddings")
@@ -188,6 +201,7 @@ class BedrockTitanv2Embedder(BaseEmbedder):
             service_name=self.service_name,
             region_name=self.region_name,
         )
+        self.sleep_ms = sleep_ms
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
     def _embed_batch(self, batch_samples: list[str]) -> list[list[float]]:
@@ -223,6 +237,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         cache_dir: str | None = None,
         batch_size: int = 1,
         max_chars: int = 1024,
+        sleep_ms: int = 0,
     ):
         """embed texts using sentence-transformers
 
@@ -231,6 +246,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
             cache_dir (str, optional): cache directory for model. Defaults to None.
             batch_size (int, optional): batch size. Defaults to 1.
             max_chars (int, optional): max chars. Defaults to 1024.
+            sleep_ms (int, optional): sleep time in ms. Defaults to 0.
         """
         if batch_size != 1:
             logger.warning("batch_size is set to 1 for Titan v2 embeddings")
@@ -239,6 +255,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self.cache_dir = cache_dir
         self.batch_size = batch_size
         self.max_chars = max_chars
+        self.sleep_ms = sleep_ms
         self.model = self._initialize_model(
             model_path=self.model_path,
             cache_dir=self.cache_dir,
