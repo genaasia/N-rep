@@ -29,7 +29,14 @@ def get_soft_f1_score(predicted, ground_truth):
     #     seen = set()
     #     return [d for d in lst if frozenset(d.items()) not in seen and not seen.add(frozenset(d.items()))]
     def remove_duplicates(list_of_dicts: list[dict]) -> list[dict]:
-        return [d for i, d in enumerate(list_of_dicts) if str(d) not in str([list_of_dicts[:i]])]
+        seen = set()
+        result = []
+        for d in list_of_dicts:
+            d_str = str(d)
+            if d_str not in seen:
+                seen.add(d_str)
+                result.append(d)
+        return result
 
     # Drop duplicates
     predicted_set = remove_duplicates(predicted)

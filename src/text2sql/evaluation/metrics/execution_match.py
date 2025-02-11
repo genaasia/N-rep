@@ -1,8 +1,42 @@
+import math
+from dataclasses import dataclass
+
 from .match_utils import get_match_for_valid_exec
 
 
+@dataclass(frozen=True)
+class ComparableTuple:
+    data: tuple
+
+    def __eq__(self, other):
+        if len(self.data) != len(other.data):
+            return False
+
+        for v1, v2 in zip(self.data, other.data):
+            if isinstance(v1, float) and isinstance(v2, float):
+                # Whole point of this clase is so that we can do set comparison
+                # while handling floating-point representation errors
+                if not math.isclose(v1, v2, rel_tol=1e-9):
+                    return False
+            elif v1 != v2:
+                return False
+        return True
+
+    def __hash__(self):
+        # Convert floats to strings with limited precision for hashing
+        processed = tuple(f"{x:.10f}" if isinstance(x, float) else x for x in self.data)
+        return hash(processed)
+
+
 def get_execution_match(pred_ex, label_ex):
-    return label_ex == pred_ex
+    def transform_results(ex_result):
+        new_ex_result = []
+        for row in ex_result:
+            new_row = ComparableTuple(tuple(row.values()))
+            new_ex_result.append(new_row)
+        return set(new_ex_result)
+
+    return transform_results(label_ex) == transform_results(pred_ex)
 
 
 def df_execution_match(df, results, config, out_col):

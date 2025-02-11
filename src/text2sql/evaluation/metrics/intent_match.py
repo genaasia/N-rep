@@ -35,14 +35,19 @@ def get_intent_match(actual, expected, normalize_dates=False):
         # print(f"Number of rows are different")
         return False
 
+    formatting_memory = {}
     def is_match(expected_val, actual_val):
         """
         This function compares expected_val and actual_val with relevant datatype conversion
         """
         if normalize_dates and isinstance(expected_val, str):
-            expected_val = parse_date_string(expected_val)
+            if expected_val not in formatting_memory:
+                formatting_memory[expected_val] = parse_date_string(expected_val)
+            expected_val = formatting_memory[expected_val]
         if normalize_dates and isinstance(actual_val, str):
-            actual_val = parse_date_string(actual_val)
+            if actual_val not in formatting_memory:
+                formatting_memory[actual_val] = parse_date_string(actual_val) 
+            actual_val = formatting_memory[actual_val]
 
         if (expected_val is None or expected_val == 0) and (actual_val is None or actual_val == 0):
             return True
@@ -73,17 +78,18 @@ def get_intent_match(actual, expected, normalize_dates=False):
                     return False
         return True
 
-    for expected_row in expected:
+    for idx, expected_row in enumerate(expected):
         row_matched = False
-        for actual_row in actual:
-            actual_row_copy = actual_row.copy()
-            if match_rule(expected_row, actual_row_copy):
-                row_matched = True
-                break
-            # if row_matched:
-            #     matched = True
-            #     actual.remove(actual_row)
-            #     break
+
+        actual_row_copy = actual[idx].copy()
+        if match_rule(expected_row, actual_row_copy):
+            row_matched = True
+        else:
+            for actual_row in actual:
+                actual_row_copy = actual_row.copy()
+                if match_rule(expected_row, actual_row_copy):
+                    row_matched = True
+                    break
         if not row_matched:
             # print(f"Comparison failed for row: exp={expected_row}, act={actual_row}")
             return False
