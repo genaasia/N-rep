@@ -95,7 +95,7 @@ def run_one_inference(row: dict) -> tuple[list[dict], str]:
             deployment_name=args.model_name, 
             reasoning_effort=args.reasoning_effort
         )
-    elif args.model_name == "gena-4o":
+    elif args.model_name in ("gena-4o", "gena-4o-2024-08-06"):
         raw_prediction: str = inference_gpt4o(
             client=AZURE_CLIENT, 
             messages=messages, 
@@ -151,6 +151,8 @@ if __name__=="__main__":
     # display settings
     if args.model_name == "gena-o3-mini":
         print(f"Running inference using {args.model_name} model with reasoning effort: {args.reasoning_effort}")
+    elif args.model_name == "gena-4o-2024-08-06":
+        print(f"Running inference using {args.model_name} model with temperature: {args.temperature}")
     elif args.model_name == "gena-4o":
         print(f"Running inference using {args.model_name} model with temperature: {args.temperature}")
     else:
