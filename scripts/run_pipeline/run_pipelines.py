@@ -1,4 +1,5 @@
 import sys
+import copy
 
 sys.path.append("../../src")
 from text2sql import hello
@@ -18,11 +19,13 @@ import pandas as pd
 import tqdm
 from dotenv import load_dotenv
 from loguru import logger
-from text2sql.data import PostgresDataset
+from text2sql.data import PostgresDataset, SqliteDataset, BaseDataset
 from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
-from text2sql.engine.prompts import GenaRepairPromptFormatter
+from text2sql.engine.prompts import GenaRepairPromptFormatter, GenaRewritePromptFormatter
+from text2sql.engine.generation import identity
+from text2sql.pipeline.settings import PipeConfig
 
 load_dotenv()
 
@@ -33,21 +36,21 @@ from evaluation.run_eval import run_eval
 
 def run_pipe_on_dataset(
     pipeline,
-    packative_test_data,
+    test_data,
     batch_size=None,
     max_workers=4,
 ):
     test_results = []
 
     if not batch_size:
-        batch_size = len(packative_test_data)
+        batch_size = len(test_data)
 
     logger.debug(f"Will run pipeline over {batch_size} rows!")
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = list(
             tqdm.tqdm(
-                executor.map(pipeline.run, packative_test_data[:batch_size]),
+                executor.map(pipeline.run, test_data[:batch_size]),
                 total=batch_size,
                 desc="Processing samples",
             )
@@ -57,12 +60,13 @@ def run_pipe_on_dataset(
     return test_results
 
 
-def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name, database_type, embedder=None, retriever=None):
+def run_inference(eval_data, pipe_configuration: PipeConfig, settings: Settings, db_instance: BaseDataset, db_name, database_type, embedder=None, retriever=None):
     # CREATE PROMPT FORMATTER
-    formatter = get_formatter(pipe_configuration.formatter, database_type)
+    formatter = get_formatter(pipe_configuration.formatter, database_type, pipe_configuration.add_date)
 
-    # CREATE REPAIR PROMPT FORMATTER
-    repair_formatter = GenaRepairPromptFormatter(database_type=database_type)
+    # CREATE REPAIR AND REWRITE PROMPT FORMATTER
+    repair_formatter = GenaRepairPromptFormatter(database_type=database_type) if pipe_configuration.repair else None
+    rewrite_formatter = GenaRewritePromptFormatter(database_type=database_type) if pipe_configuration.rewrite else None
 
     # GET POST FUNCTION
     post_func = get_postfunc(pipe_configuration.postfunc)
@@ -71,11 +75,26 @@ def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name,
     generator = get_generator(
         pipe_configuration.generator.name,
         pipe_configuration.generator.model,
-        post_func,
+        identity,
     )
 
     # GET SCHEMA DESCRIPTION
-    schema_description = get_schema_description(pipe_configuration.schema, db_instance)
+    ## If the benchmark mode is on we will cache all schema descriptions in the schema_description dict
+    ## If we are evaluating a single dataset like packative, schema_description will be a string
+    if settings.benchmark:
+        if settings.db_name_key:
+            schema_description = {}
+            for datum in eval_data:
+                db_name = datum[settings.db_name_key]
+                if db_name not in schema_description:
+                    schema_description[db_name] = get_schema_description(db_name, pipe_configuration.schema, db_instance)
+        else:
+            raise Exception(
+                "Pipeline attribute schema_description is a dict but a db_name_key is not provided."
+            )
+    else:
+        schema_description = get_schema_description(os.environ.get("POSTGRES_DB"), pipe_configuration.schema, db_instance)
+
 
     # CREATE PIPELINE
     max_retry = 3
@@ -91,7 +110,11 @@ def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name,
         pipe_configuration.generator.top_k,
         db_instance,
         db_name,
-        repair_formatter
+        settings.question_key,
+        post_func,
+        repair_formatter,
+        rewrite_formatter,
+        settings.db_name_key,
     )
 
     # RUN PIPELINE OVER DATASET
@@ -104,25 +127,46 @@ def run_inference(eval_data, pipe_configuration, settings, db_instance, db_name,
     return test_results
 
 
+def get_experiment_format(test_results):
+    experiment_results = []
+    for test_result in test_results:
+        experiment_result = copy.deepcopy(test_result)
+        del experiment_result["api_execution_result"]
+        del experiment_result["predictions"]
+        del experiment_result["messages"]
+        del experiment_result["llm_output"]
+        flat_keys = ["predicted_sql", "sql_match_score", "execution_match_score", "intent_score", "soft_f1_score"]
+        for key in flat_keys:
+            experiment_result[key]=experiment_result["highest_voted_valid"][key]
+        del experiment_result["highest_voted_valid"]
+        experiment_results.append(experiment_result)
+    return experiment_results
+
+
 def save_results(test_results, eval_results, file_name, settings):
+    experiment_results = get_experiment_format(test_results)
+
     outputs_file_path = os.path.join(settings.outputs_folder, f"{file_name}.json")
-    if not os.path.exists(settings.outputs_folder):
-        os.mkdir(settings.outputs_folder)
+    experiments_file_path = os.path.join(settings.outputs_folder, f"{file_name}_experiment_format.json")
+    if not os.path.isdir(settings.outputs_folder):
+        os.makedirs(settings.outputs_folder)
         logger.debug(
             f"Folder {settings.outputs_folder} doesn't exist, creating it now!"
         )
     with open(outputs_file_path, "w") as f:
         json.dump(test_results, f, indent=2)
+    with open(experiments_file_path, "w") as f:
+        json.dump(experiment_results, f, indent=2)
 
     results_file_path = os.path.join(settings.results_folder, f"{file_name}.json")
-    if not os.path.exists(settings.results_folder):
-        os.mkdir(settings.results_folder)
+    if not os.path.isdir(settings.results_folder):
+        os.makedirs(settings.results_folder)
         logger.debug(f"Folder {settings.results_folder} doesn't exist, creating it now!")
     with open(results_file_path, "w") as f:
         json.dump(eval_results, f, indent=2)
 
-    if not os.path.exists(settings.plots_folder):
-        os.mkdir(settings.plots_folder)
+    if not os.path.isdir(settings.plots_folder):
+        os.makedirs(settings.plots_folder)
         logger.debug(f"Folder {settings.plots_folder} doesn't exist, creating it now!")
 
     plot_file_path = os.path.join(settings.plots_folder, f"{file_name}.png")
@@ -179,22 +223,24 @@ def main():
     log_file = f"{formatted_date}.log"
     logs_folder = settings.log_folder
     logs_file_path = os.path.join(logs_folder, log_file)
-    if not os.path.exists(logs_folder):
-        os.mkdir(logs_folder)
+    if not os.path.isdir(logs_folder):
+        os.makedirs(logs_folder)
         logger.debug(f"Folder {logs_folder} doesn't exist, creating it now!")
     logger.add(logs_file_path)
 
-    # LOAD DB AND CHECK SANITY
-    packative_dataset = PostgresDataset(
-        os.environ.get("POSTGRES_HOST"),
-        os.environ.get("POSTGRES_PORT"),
-        os.environ.get("POSTGRES_USER"),
-        os.environ.get("POSTGRES_PASSWORD"),
-    )
-    sanity_check = packative_dataset.query_database(
-        os.environ.get("POSTGRES_DB"), "SELECT COUNT(DISTINCT bank) FROM bank_account;"
-    )
-    assert sanity_check == [{"count": 10}]
+    if settings.database_type == "postgres":
+        db_instance = PostgresDataset(
+            os.environ.get("POSTGRES_HOST"),
+            os.environ.get("POSTGRES_PORT"),
+            os.environ.get("POSTGRES_USER"),
+            os.environ.get("POSTGRES_PASSWORD"),
+        )
+    elif settings.database_type == "sqlite":
+        db_instance = SqliteDataset(os.environ.get("SQLITE_DB_PATH"))
+    else:
+        raise Exception(
+                f"Databse type {settings.database_type } is not recognized"
+            ) 
 
 
     retriever = WeaviateRetriever(
@@ -211,10 +257,10 @@ def main():
         )
 
     if args.update_embeddings and args.run_inference:
-        packative_train_data = pd.read_csv(settings.train_file_path).to_dict(orient="records")
-        # packative_train_data = [datum for datum in packative_train_data if datum["validated"]]
+        train_data = pd.read_csv(settings.train_file_path).to_dict(orient="records")
+        # train_data = [datum for datum in train_data if datum["validated"]]
         
-        train_queries = [example["nl_en_query"] for example in packative_train_data]
+        train_queries = [example["nl_en_query"] for example in train_data]
         print(f"{len(train_queries)=}")
         if not os.path.isfile(settings.train_embedding_file_path):
             print(f"generating train embeddings and saving to '{settings.train_embedding_file_path}'")
@@ -226,16 +272,44 @@ def main():
 
         _ = retriever.populate_collection(
                 embeddings=train_embeddings,
-                data=packative_train_data,
+                data=train_data,
             )
 
     score_cache = {}
     if args.run_inference:
-        packative_test_data = pd.read_csv(settings.test_file_path).to_dict(
-            orient="records"
+        _, extension = os.path.splitext(settings.test_file_path)
+
+        if extension == ".json":
+            reader = pd.read_json
+        elif extension == ".csv":
+            reader = pd.read_csv
+        else:
+            raise Exception(
+                f"Extension {extension} is not recognized for the file {settings.test_file_path}"
+            )
+
+        test_data = reader(settings.test_file_path).to_dict(
+                    orient="records"
         )
+        if settings.batch_size:
+            test_data = test_data[:settings.batch_size]
+        for idx in tqdm.trange(len(test_data)):
+            if not "api_execution_result" in test_data[idx]:
+                if settings.benchmark:
+                    db_name = test_data[idx][settings.db_name_key]
+                else:
+                    db_name = os.environ.get("POSTGRES_DB")
+                result = db_instance.validate_query(db_name, test_data[idx][settings.target_sql_key])
+                if result["validated"]:
+                    test_data[idx]["api_execution_result"] = result["execution_result"]
+                else:
+                    logger.error(
+                        "api_execution_result is empty and the golden query is not valid!\nSomething seems wrong with your data"
+                    )
+        with open(str(settings.test_file_path).replace(".json", ".withdata.json"), "w") as f:
+            json.dump(test_data, f, indent=2)
         if args.subset:
-            packative_test_data = random.sample(packative_test_data, int(args.subset))
+            test_data = random.sample(test_data, int(args.subset))
         for pipe_configuration in settings.pipe_configurations:
             logger.debug(f"Running configuration {pipe_configuration.pipe_name}")
             logger.debug(
@@ -243,10 +317,10 @@ def main():
             )
 
             test_results = run_inference(
-                packative_test_data,
+                test_data,
                 pipe_configuration,
                 settings,
-                packative_dataset,
+                db_instance,
                 os.environ.get("POSTGRES_DB"),
                 settings.database_type,
                 embedder,
@@ -257,8 +331,8 @@ def main():
             file_name = f"{pipe_configuration.pipe_name}_{formatted_date}.json"
             inference_file_path = os.path.join(settings.inference_folder, file_name)
 
-            if not os.path.exists(settings.inference_folder):
-                os.mkdir(settings.inference_folder)
+            if not os.path.isdir(settings.inference_folder):
+                os.makedirs(settings.inference_folder)
                 logger.debug(
                     f"Folder {settings.inference_folder} doesn't exist, creating it now!"
                 )
@@ -269,7 +343,7 @@ def main():
             if args.run_eval:
                 file_name = f"{pipe_configuration.pipe_name}_{formatted_date}"
 
-                eval_results = run_eval(test_results, test_results, score_cache)
+                eval_results = run_eval(test_results, test_results, score_cache, settings.target_sql_key)
 
                 save_results(test_results, eval_results, file_name, settings)
 
@@ -293,7 +367,7 @@ def main():
         if args.run_eval:
             file_name = f"{inference_file_name}_{formatted_date}"
 
-            eval_results = run_eval(test_results, test_results, score_cache)
+            eval_results = run_eval(test_results, test_results, score_cache, settings.target_sql_key)
 
             save_results(test_results, eval_results, file_name, settings)
 

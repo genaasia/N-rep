@@ -1,5 +1,5 @@
 from ast import literal_eval
-
+import tqdm
 import numpy as np
 from .eval_utils import (
     upper_bound_eval,
@@ -9,7 +9,7 @@ from .eval_utils import (
 )
 
 
-def run_eval(predicted_data, target_data, score_cache):
+def run_eval(predicted_data, target_data, score_cache, target_sql_key):
     all_methods = {}
     # for method in ["highest_voted_valid", "highest_voted", "upper_bound", "lower_bound"]:
     for method in ["highest_voted_valid"]:
@@ -20,7 +20,7 @@ def run_eval(predicted_data, target_data, score_cache):
             "soft_f1_scores": [],
             "valids": [],
         }
-        for i, predicted_datum in enumerate(predicted_data):
+        for i, predicted_datum in enumerate(tqdm.tqdm(predicted_data)):
             target_datum = target_data[i]
             predictions = predicted_datum["predictions"]
             if not predictions:
@@ -31,8 +31,12 @@ def run_eval(predicted_data, target_data, score_cache):
                 all_methods[method]["valids"].append(False)
                 continue
 
-            target_sql = target_datum["sql_query"]
-            target_execution = literal_eval(target_datum["api_execution_result"])
+            target_sql = target_datum[target_sql_key]
+
+            if isinstance(target_datum["api_execution_result"], str):
+                target_execution = literal_eval(target_datum["api_execution_result"])
+            else:
+                target_execution = target_datum["api_execution_result"]
 
             if method == "upper_bound":
                 (
@@ -78,7 +82,10 @@ def run_eval(predicted_data, target_data, score_cache):
                     predictions, target_sql, target_execution, score_cache
                 )
                 predicted_data[i]["highest_voted_valid"] = {
+                    "sql_match_score": sql_match_score,
+                    "execution_match_score": execution_match_score,
                     "intent_score": intent_score,
+                    "soft_f1_score": soft_f1_score,
                     "predicted_sql": predicted_sql,
                     "predicted_execution": predicted_execution,
                 }

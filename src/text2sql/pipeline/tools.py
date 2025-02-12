@@ -45,21 +45,21 @@ def get_generator(generator_name, model, post_func):
     return generator
 
 
-def get_formatter(formatter_name, database_type):
+def get_formatter(formatter_name, database_type, add_date):
     if formatter_name == "legacy":
         formatter = LegacyFewShotPromptFormatter(database_type=database_type)
     elif formatter_name == "ESQLCoT":
         formatter = ESQLCoTPromptFormatter(database_type=database_type)
     elif formatter_name == "GENACoT":
-        formatter = GenaCoTPromptFormatter(database_type=database_type)
+        formatter = GenaCoTPromptFormatter(database_type=database_type, add_date=add_date)
     else:
         raise Exception(f"No known formatter with the name {formatter_name}")
     return formatter
 
 
-def get_schema_description(schema_name, db_instance):
+def get_schema_description(db_name, schema_name, db_instance):
     schema_description = db_instance.describe_database_schema(
-            os.environ.get("POSTGRES_DB"), mode=schema_name
+            db_name, mode=schema_name
         )
     return schema_description
 

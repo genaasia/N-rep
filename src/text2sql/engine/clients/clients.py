@@ -6,12 +6,13 @@ from loguru import logger
 from openai import AsyncAzureOpenAI, AzureOpenAI
 
 
-def get_azure_client(api_key: str, api_version: str, azure_endpoint: str) -> AzureOpenAI:
+def get_azure_client(api_key: str, api_version: str, azure_endpoint: str, **kwargs) -> AzureOpenAI:
     """get azure client"""
     client = AzureOpenAI(
         api_key=api_key,
         api_version=api_version,
         azure_endpoint=azure_endpoint,
+        **kwargs,
     )
     return client
 

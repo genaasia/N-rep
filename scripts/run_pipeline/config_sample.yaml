@@ -11,8 +11,13 @@ collection_name: packative_collection_1
 batch_size: null
 max_workers: 4
 
+question_key: question
+target_sql_key: SQL
+
 pipe_configurations:
   - formatter: GENACoT
+    rewrite: True
+    repair: True
     schema: basic
     postfunc: extract_first_code_block
     generator:
@@ -24,6 +29,7 @@ pipe_configurations:
     candidate_count: 1
     pipe_name: pipe_v1
   - formatter: GENACoTZs
+    repair: True
     schema: basic
     postfunc: extract_first_code_block
     generator:
