@@ -41,7 +41,7 @@ run `pip install requirements.txt`
 run inference like below.
 
 - `--database-directory` should point to the BIRD dev_databases location
-- `--model-name` should be "gena-4o" or "gena-o3-mini". set the env file url accordingly!
+- `--model-name` should be "gena-4o-2024-08-06" (recommended 4o), "gena-4o" or "gena-o3-mini". set the env file url accordingly!
 - `--threads` controls parallel requests. maybe set it lower (1~2) for o3 due to usage limits
 
 it will output two files in the same path as the input file:
@@ -58,7 +58,15 @@ python run_inference.py \
   --threads 4
 ```
 
-### run evaluation
+## chunked inference
+
+if you run into timeout errors, you can use the `split_files.py` script to split the test data into n-row chunks.
+
+then, you can use the `run_inference_batched.sh` script to process each file individually, with sleep between chunks.
+
+(you should edit the sh file as you must specify the target directory and your conda environment inside!)
+
+## run evaluation
 
 now you can run evaluation on the predictions.
 
