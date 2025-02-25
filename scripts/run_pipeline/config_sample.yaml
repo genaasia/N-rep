@@ -51,3 +51,19 @@ pipe_configurations:
       top_k: 8
     candidate_count: 3
     pipe_name: pipe_v3
+  - formatter: GENACoT
+    schema: basic_types_relations
+    postfunc: extract_first_code_block
+    generator:
+      name: aws-bedrock
+      model: us.anthropic.claude-3-7-sonnet-20250219-v1:0
+      config:
+        inferenceConfig:
+          maxTokens: 20000
+        additionalModelRequestFields:
+          thinking:
+            type: enabled
+            budget_tokens: 16000
+      top_k: 0
+    candidate_count: 1
+    pipe_name: pipe_v1_basic_types_relations

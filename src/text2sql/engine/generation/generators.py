@@ -94,7 +94,7 @@ class BedrockGenerator:
                 messages=formatted_messages,
                 **kwargs,
             )
-        return self.post_func(response["output"]["message"]["content"][0]["text"])
+        return self.post_func(response["output"]["message"]["content"][-1]["text"])
 
     
 class GCPGenerator:
