@@ -5,6 +5,8 @@ from text2sql.engine.generation import (
     AzureGenerator, 
     BedrockGenerator,
     GCPGenerator,
+    OpenAIGenerator,
+    TogetherAIGenerator
 )
 from text2sql.engine.generation.postprocessing import (
     extract_first_code_block, 
@@ -37,6 +39,19 @@ def get_generator(generator_name, model, post_func):
     elif generator_name == "aws-bedrock":
         generator = BedrockGenerator(
             region_name="us-west-2",
+            model=model,
+            post_func=post_func,
+        )
+    elif generator_name == "openai":
+        generator = OpenAIGenerator(
+            api_key=os.environ.get("OPENAI_CLIENT_API_KEY"),
+            model=model,
+            post_func=post_func,
+            base_url=os.environ.get("OPENAI_BASE_URL"),
+        )
+    elif generator_name == "togetherai":
+        generator = TogetherAIGenerator(
+            api_key=os.environ.get("TOGETHERAI_API_KEY"),
             model=model,
             post_func=post_func,
         )

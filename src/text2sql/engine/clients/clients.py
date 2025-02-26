@@ -3,8 +3,8 @@ import cohere
 import weaviate
 
 from loguru import logger
-from openai import AsyncAzureOpenAI, AzureOpenAI
-
+from openai import AsyncAzureOpenAI, AzureOpenAI, OpenAI
+from together import Together
 
 def get_azure_client(api_key: str, api_version: str, azure_endpoint: str, **kwargs) -> AzureOpenAI:
     """get azure client"""
@@ -43,6 +43,26 @@ def get_cohere_client(api_key: str) -> cohere.Client:
 def get_async_cohere_client(api_key: str) -> cohere.AsyncClient:
     """get async cohere client"""
     return cohere.AsyncClient(api_key=api_key)
+
+
+def get_openai_client(api_key: str, base_url: str | None = None) -> OpenAI:
+    """get openai client"""
+    # If base_url is None the OpenAI library checks OPENAI_BASE_URL env variable
+    # If env variable is not set it defaults to https://api.openai.com/v1
+    # Deepseek also uses this client by changing the base_url
+    client = OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+    )
+    return client
+
+
+def get_togetherai_client(api_key: str) -> OpenAI:
+    """get azure client"""
+    client = Together(
+        api_key=api_key
+    )
+    return client
 
 
 def get_weaviate_client(host: str, port: int, grpc_port: int) -> weaviate.WeaviateClient:

@@ -67,3 +67,23 @@ pipe_configurations:
       top_k: 0
     candidate_count: 1
     pipe_name: pipe_v1_basic_types_relations
+  - formatter: GENACoT
+    schema: basic_types_relations
+    postfunc: extract_first_code_block
+    generator:
+      name: openai
+      model: deepseek-chat
+      config:
+      top_k: 0
+    candidate_count: 1
+    pipe_name: pipe_v1_basic_types_relations
+  - formatter: GENACoT
+    schema: basic_types_relations
+    postfunc: extract_first_code_block
+    generator:
+      name: togetherai
+      model: deepseek-ai/DeepSeek-R1
+      config:
+      top_k: 0
+    candidate_count: 1
+    pipe_name: pipe_v1_basic_types_relations
