@@ -1,10 +1,5 @@
 from sql_metadata import Parser
-from text2sql.evaluation.metrics import (
-    get_execution_match,
-    get_intent_match,
-    get_soft_f1_score,
-    get_sql_match,
-)
+from txt2sql.metrics import execution_match, intent_match, soft_f1, sql_match
 
 
 def get_top_voted_queries(queries_list, n):
@@ -62,19 +57,19 @@ def upper_bound_eval(predictions, target_sql, target_execution, score_cache):
     # Mapping of score types to their evaluation functions
     score_functions = {
         "sql_match": {
-            "eval_func": get_sql_match,
+            "eval_func": sql_match,
             "stop_condition": any,
         },
         "execution_match": {
-            "eval_func": get_execution_match,
+            "eval_func": execution_match,
             "stop_condition": any,
         },
         "intent": {
-            "eval_func": get_intent_match,
+            "eval_func": intent_match,
             "stop_condition": any,
         },
         "soft_f1": {
-            "eval_func": get_soft_f1_score,
+            "eval_func": soft_f1,
             "stop_condition": lambda score_list: 1.0 in score_list,
         },
     }
@@ -122,19 +117,19 @@ def lower_bound_eval(predictions, target_sql, target_execution, score_cache):
     # Mapping of score types to their evaluation functions
     score_functions = {
         "sql_match": {
-            "eval_func": get_sql_match,
+            "eval_func": sql_match,
             "calculate_condition": all,
         },
         "execution_match": {
-            "eval_func": get_execution_match,
+            "eval_func": execution_match,
             "calculate_condition": all,
         },
         "intent": {
-            "eval_func": get_intent_match,
+            "eval_func": intent_match,
             "calculate_condition": all,
         },
         "soft_f1": {
-            "eval_func": get_soft_f1_score,
+            "eval_func": soft_f1,
             "calculate_condition": lambda score_list: not 0.0 in score_list,
         },
     }
@@ -187,10 +182,10 @@ def highest_voted_eval(predictions, target_sql, target_execution, score_cache):
     predicted_execution = values["results"]
 
     eval_functions = [
-        get_sql_match,
-        get_execution_match,
-        get_intent_match,
-        get_soft_f1_score,
+        sql_match,
+        execution_match,
+        intent_match,
+        soft_f1,
     ]
     scores = []
     for eval_func in eval_functions:
@@ -198,8 +193,8 @@ def highest_voted_eval(predictions, target_sql, target_execution, score_cache):
             run_eval_with_cache(
                 predicted_sql,
                 target_sql,
-                predicted_execution if eval_func != get_sql_match else predicted_sql,
-                target_execution if eval_func != get_sql_match else target_sql,
+                predicted_execution if eval_func != sql_match else predicted_sql,
+                target_execution if eval_func != sql_match else target_sql,
                 eval_func,
                 score_cache,
             )
@@ -224,12 +219,12 @@ def highest_voted_valid_eval(predictions, target_sql, target_execution, score_ca
     )
     predicted_execution = values["results"]
 
-    get_intent_normalized = lambda x, y: get_intent_match(x, y, normalize_dates=True)
+    get_intent_normalized = lambda x, y: intent_match(x, y, normalize_dates=True)
     eval_functions = [
-        get_sql_match,
-        get_execution_match,
+        sql_match,
+        execution_match,
         get_intent_normalized,
-        get_soft_f1_score,
+        soft_f1,
     ]
     scores = []
     for eval_func in eval_functions:
@@ -237,8 +232,8 @@ def highest_voted_valid_eval(predictions, target_sql, target_execution, score_ca
             run_eval_with_cache(
                 predicted_sql,
                 target_sql,
-                predicted_execution if eval_func != get_sql_match else predicted_sql,
-                target_execution if eval_func != get_sql_match else target_sql,
+                predicted_execution if eval_func != sql_match else predicted_sql,
+                target_execution if eval_func != sql_match else target_sql,
                 eval_func,
                 score_cache,
             )

@@ -10,7 +10,7 @@ tenacity==9.0.0
 boto3==1.37.0
 cohere==5.11.1
 weaviate-client==4.9.0
-sqlfluff==3.2.5
+txt2sql==0.2.0
 matplotlib
 google-generativeai
 sql-metadata
