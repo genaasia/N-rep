@@ -19,7 +19,7 @@ import pandas as pd
 import tqdm
 from dotenv import load_dotenv
 from loguru import logger
-from text2sql.data import PostgresDataset, SqliteDataset, BaseDataset
+from text2sql.data import PostgresDataset, MysqlDataset, SqliteDataset, BaseDataset
 from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
@@ -93,7 +93,7 @@ def run_inference(eval_data, pipe_configuration: PipeConfig, settings: Settings,
                 "Pipeline attribute schema_description is a dict but a db_name_key is not provided."
             )
     else:
-        schema_description = get_schema_description(os.environ.get("POSTGRES_DB"), pipe_configuration.schema, db_instance)
+        schema_description = get_schema_description(os.environ.get("DEV_DB_NAME"), pipe_configuration.schema, db_instance)
 
 
     # CREATE PIPELINE
@@ -235,6 +235,13 @@ def main():
             os.environ.get("POSTGRES_USER"),
             os.environ.get("POSTGRES_PASSWORD"),
         )
+    elif settings.database_type == "mysql":
+        db_instance = MysqlDataset(
+            os.environ.get("MYSQL_HOST"),
+            os.environ.get("MYSQL_PORT"),
+            os.environ.get("MYSQL_USER"),
+            os.environ.get("MYSQL_PASSWORD"),
+        )
     elif settings.database_type == "sqlite":
         db_instance = SqliteDataset(os.environ.get("SQLITE_DB_PATH"))
     else:
@@ -257,7 +264,16 @@ def main():
         )
 
     if args.update_embeddings and args.run_inference:
-        train_data = pd.read_csv(settings.train_file_path).to_dict(orient="records")
+        _, extension = os.path.splitext(settings.train_file_path)
+        if extension == ".json":
+            reader = pd.read_json
+        elif extension == ".csv":
+            reader = pd.read_csv
+        else:
+            raise Exception(
+                f"Extension {extension} is not recognized for the file {settings.test_file_path}"
+            )
+        train_data = reader(settings.train_file_path).to_dict(orient="records")
         # train_data = [datum for datum in train_data if datum["validated"]]
         
         train_queries = [example["nl_en_query"] for example in train_data]
@@ -298,7 +314,7 @@ def main():
                 if settings.benchmark:
                     db_name = test_data[idx][settings.db_name_key]
                 else:
-                    db_name = os.environ.get("POSTGRES_DB")
+                    db_name = os.environ.get("DEV_DB_NAME")
                 result = db_instance.validate_query(db_name, test_data[idx][settings.target_sql_key])
                 if result["validated"]:
                     test_data[idx]["api_execution_result"] = result["execution_result"]
@@ -321,7 +337,7 @@ def main():
                 pipe_configuration,
                 settings,
                 db_instance,
-                os.environ.get("POSTGRES_DB"),
+                os.environ.get("DEV_DB_NAME"),
                 settings.database_type,
                 embedder,
                 retriever

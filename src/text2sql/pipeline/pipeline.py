@@ -46,11 +46,17 @@ def single_sample_pipe(
                 search_results = retriever.query(embedder.embed(sample_query), top_k=top_k)
             else:
                 search_results = []
-            messages = formatter.generate_messages(
-                schema_description=schema_description,
-                query=sample_query,
-                few_shot_examples=search_results,
-            )
+            if search_results:
+                messages = formatter.generate_messages(
+                    schema_description=schema_description,
+                    query=sample_query,
+                    few_shot_examples=search_results,
+                )
+            else:
+                messages = formatter.generate_messages(
+                    schema_description=schema_description,
+                    query=sample_query,
+                )
         else:
             messages = formatter.generate_messages(schema_description=schema_description, query=sample_query)
 

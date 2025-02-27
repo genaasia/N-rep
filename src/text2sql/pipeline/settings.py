@@ -110,7 +110,7 @@ class Settings:
             inference_folder=Path(outputs.get("inference_folder", config.get("inference_folder", "./inference"))),
             
             # Data section
-            database_type=data.get("type", config.get("database_type", "sqlite")),
+            database_type=data.get("database_type", config.get("database_type", "sqlite")),
             collection_name=data.get("collection_name", config.get("collection_name", "default_collection")),
             question_key=data.get("question_key", config.get("question_key", "question")),
             target_sql_key=data.get("target_sql_key", config.get("target_sql_key", "SQL")),
