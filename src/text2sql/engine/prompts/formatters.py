@@ -15,6 +15,7 @@ from text2sql.engine.prompts.constants_v2 import (
     ESQL_QE_PROMPT
 )
 
+from text2sql.engine.prompts.constants_v3 import SIMPLE_PROMPT_TEMPLATE_FOR_REASONERS, SIMPLE_USER_PROMPT_FOR_REASONERS
 from text2sql.engine.prompts.constants_v3 import GENA_COT_PROMPT_TEMPLATE as GENA_COT_PROMPT_V3_TEMPLATE
 from text2sql.engine.prompts.constants_v3 import GENA_REPAIR_SYSTEM_PROMPT_TEMPLATE
 from text2sql.engine.prompts.constants_v3 import GENA_REPAIR_USER_MESSAGE_TEMPLATE
@@ -323,5 +324,43 @@ class GenaRewritePromptFormatter(BasePromptFormatter):
              user_question=query,
              original_sql=predicted_sql      
         )
+        messages.append({"role": "user", "content": query_message})
+        return messages
+
+
+class SimplePromptFormatter(BasePromptFormatter):
+    """format messages in a simple format for reasoning models."""
+    def __init__(
+            self,
+            database_type: str,
+        ):
+        self.database_type = database_type
+
+    def generate_messages(
+            self, 
+            schema_description: str, 
+            query: str, 
+        ) -> list[dict]:
+        if self.database_type == "mysql":
+            dialect_guidelines = GENA_MYSQL_GUIDELINES
+        elif self.database_type == "postgres":
+            dialect_guidelines = GENA_POSTGRES_GUIDELINES
+        elif self.database_type == "sqlite":
+            dialect_guidelines = GENA_SQLITE_GUIDELINES
+        else:
+            raise ValueError(f"unsupported database type: {self.database_type}")
+
+        formatted_system_message = SIMPLE_PROMPT_TEMPLATE_FOR_REASONERS.format(
+            sql_dialect=self.database_type,
+            dialect_guidelines=dialect_guidelines,
+        )
+        messages = [{"role": "system", "content": formatted_system_message}]
+
+        query_message = SIMPLE_USER_PROMPT_FOR_REASONERS.format(
+            schema_description=schema_description,
+            user_question=query, 
+            sql_dialect=self.database_type
+        )
+
         messages.append({"role": "user", "content": query_message})
         return messages
