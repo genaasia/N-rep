@@ -316,7 +316,11 @@ def main():
                     db_name = test_data[idx][settings.db_name_key]
                 else:
                     db_name = os.environ.get("DEV_DB_NAME")
-                result = db_instance.validate_query(db_name, test_data[idx][settings.target_sql_key])
+                result = db_instance.normalize_db_query_results(
+                    db_instance.validate_query(
+                        db_name, test_data[idx][settings.target_sql_key]
+                    )
+                )
                 if result["validated"]:
                     test_data[idx]["api_execution_result"] = result["execution_result"]
                 else:
