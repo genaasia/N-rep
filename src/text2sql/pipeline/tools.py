@@ -15,6 +15,7 @@ from text2sql.engine.generation.postprocessing import (
 from text2sql.engine.prompts import (
     ESQLCoTPromptFormatter,
     GenaCoTPromptFormatter,
+    GenaCoTwEvidencePromptFormatter
     LegacyFewShotPromptFormatter,
     SimplePromptFormatter,
 )
@@ -70,6 +71,8 @@ def get_formatter(formatter_name, database_type, add_date):
         formatter = GenaCoTPromptFormatter(database_type=database_type, add_date=add_date)
     elif formatter_name == "SimpleReasoner":
         formatter = SimplePromptFormatter(database_type=database_type)
+    elif formatter_name == "GenaCoTwEvidence":
+        formatter = GenaCoTwEvidencePromptFormatter(database_type=database_type)
     else:
         raise Exception(f"No known formatter with the name {formatter_name}")
     return formatter

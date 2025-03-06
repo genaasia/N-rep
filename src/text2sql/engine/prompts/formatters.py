@@ -28,6 +28,8 @@ from text2sql.engine.prompts.constants_v3 import (
      GENA_USER_EXAMPLE_TEMPLATE,
      GENA_USER_QUERY_TEMPLATE,
      GENA_USER_QUERY_NO_DATE_TEMPLATE,
+     GENA_USER_QUERY_EVIDENCE_TEMPLATE,
+     GENA_COT_W_EVIDENCE_PROMPT_TEMPLATE,
      GENA_ASSISTANT_TEMPLATE
 )
 
@@ -359,6 +361,58 @@ class SimplePromptFormatter(BasePromptFormatter):
         query_message = SIMPLE_USER_PROMPT_FOR_REASONERS.format(
             schema_description=schema_description,
             user_question=query, 
+            sql_dialect=self.database_type
+        )
+
+        messages.append({"role": "user", "content": query_message})
+        return messages
+
+
+class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
+    """format messages in the GENA AI API format with custom prompt template."""
+    def __init__(
+            self,
+            database_type: str,
+            few_shot_query_key: str = "nl_en_query",
+            few_shot_target_key: str = "sql_query",
+        ):
+        self.database_type = database_type
+        self.few_shot_query_key = few_shot_query_key
+        self.few_shot_target_key = few_shot_target_key
+
+    def generate_messages(
+            self, 
+            schema_description: str, 
+            query: str, 
+            evidence: str,
+            few_shot_examples: list[dict] = [],
+        ) -> list[dict]:
+        if self.database_type == "mysql":
+            dialect_guidelines = GENA_MYSQL_GUIDELINES
+        elif self.database_type == "postgres":
+            dialect_guidelines = GENA_POSTGRES_GUIDELINES
+        elif self.database_type == "sqlite":
+            dialect_guidelines = GENA_SQLITE_GUIDELINES
+        else:
+            raise ValueError(f"unsupported database type: {self.database_type}")
+
+        formatted_system_message = GENA_COT_W_EVIDENCE_PROMPT_TEMPLATE.format(
+            sql_dialect=self.database_type,
+            dialect_guidelines=dialect_guidelines,
+            schema_description=schema_description
+        )
+        messages = [{"role": "system", "content": formatted_system_message}]
+
+        for example in few_shot_examples:
+            example_query = example["data"][self.few_shot_query_key]
+            example_sql = example["data"][self.few_shot_target_key]
+            example_evidence = example["data"]["evidence"]
+            messages.append({"role": "user", "content": GENA_USER_QUERY_EVIDENCE_TEMPLATE.format(user_question=example_query, evidence=example_evidence, sql_dialect=self.database_type)})
+            messages.append({"role": "assistant", "content": GENA_ASSISTANT_TEMPLATE.format(sql_query=example_sql)})
+
+        query_message = GENA_USER_QUERY_EVIDENCE_TEMPLATE.format(
+            user_question=query, 
+            evidence=evidence, 
             sql_dialect=self.database_type
         )
 
