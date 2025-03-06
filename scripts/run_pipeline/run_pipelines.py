@@ -277,7 +277,7 @@ def main():
         train_data = reader(settings.train_file_path).to_dict(orient="records")
         # train_data = [datum for datum in train_data if datum["validated"]]
         
-        train_queries = [example["nl_en_query"] for example in train_data]
+        train_queries = [example[settings.question_key] for example in train_data]
         print(f"{len(train_queries)=}")
         if not os.path.isfile(settings.train_embedding_file_path):
             print(f"generating train embeddings and saving to '{settings.train_embedding_file_path}'")
@@ -290,6 +290,7 @@ def main():
         _ = retriever.populate_collection(
                 embeddings=train_embeddings,
                 data=train_data,
+                sleep_ms=0
             )
 
     score_cache = {}
