@@ -9,13 +9,14 @@ from datetime import datetime, date, time, timedelta
 from abc import ABC, abstractmethod
 
 import sqlalchemy
-
 from sqlalchemy import create_engine, inspect, text
+from func_timeout import FunctionTimedOut, func_timeout
 
 from text2sql.data.sqlite_functions import  get_sqlite_database_file, query_sqlite_database, get_sqlite_schema, query_sqlite_database_from_connection
 from text2sql.data.schema_to_text import schema_to_basic_format, schema_to_sql_create, schema_to_datagrip_format
 from text2sql.data.mysql_functions import get_mysql_schema
 from text2sql.data.postgres_functions import get_postgresql_schema
+
 
 def list_supported_databases(dataset_base_path: str) -> list[str]:
     """find all sqlite databases in the dataset directory and return their names"""
@@ -48,14 +49,25 @@ class BaseDataset(ABC):
     def query_database(self, database_name: str, query: str) -> list[dict]:
         pass
 
-    def validate_query(self, database_name: str, query: str) -> dict:
+    def validate_query(
+        self, database_name: str, query: str, timeout_secs: int = 30
+    ) -> dict:
         """validate the query against the database schema"""
         try:
-            result: list[dict] = self.query_database(database_name, query)
+            # Explicitly catch FunctionTimedOut
+            result = func_timeout(
+                timeout_secs, self.query_database, args=(database_name, query)
+            )
             success: bool = True
             message: str = "ok"
+        except FunctionTimedOut as e:
+            # Handle timeout specifically
+            result = []
+            success: bool = False
+            message: str = f"query timed out after 300 seconds"
         except Exception as e:
-            result: list[dict] = []
+            # Handle other exceptions
+            result = []
             success: bool = False
             message: str = f"error - {type(e).__name__}: {str(e)}"
         return {"validated": success, "message": message, "execution_result": result}
