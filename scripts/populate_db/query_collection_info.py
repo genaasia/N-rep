@@ -31,15 +31,15 @@ from text2sql.engine.retrieval import WeaviateRetriever, WeaviateCloudRetriever
 
 
 # parse arguments
-parser = argparse.ArgumentParser(description="embed data and save embeddings")
+parser = argparse.ArgumentParser(description="query weaviate collection info")
 parser.add_argument("--weaviate-collection-name", type=str, required=True, help="weaviate collection name")
 parser.add_argument("--reset-weaviate-collection", action="store_true", help="reset weaviate collection")
-parser.add_argument("--normalize-embeddings", action="store_true", help="normalize embeddings")
-parser.add_argument("--use-weaviate-cloud", action="store_true", help="use weaviate cloud for retrieval")
+parser.add_argument("--use-weaviate-cloud", action="store_true", help="use weaviate cloud")
 parser.add_argument("--weaviate-cluster-url", type=str, default="", help="weaviate cloud cluster url, if using cloud")
 parser.add_argument("--weaviate-host", type=str, default="localhost", help="local weaviate host, default 'localhost'")
 parser.add_argument("--weaviate-port", type=int, default=8081, help="local weaviate port, default '8081'")
 parser.add_argument("--weaviate-grpc-port", type=int, default=50051, help="local weaviate grpc port, default '50051'")
+parser.add_argument("--weaviate-connect-timeout", type=int, default=2, help="weaviate connection timeout seconds, default 2")
 args = parser.parse_args()
 
 load_dotenv()
@@ -55,6 +55,7 @@ if args.use_weaviate_cloud:
         cluster_url=args.weaviate_cluster_url,
         collection_name=args.weaviate_collection_name,
         auth_credentials=os.environ["WEAVIATE_API_KEY"],
+        init_timeout=args.weaviate_connect_timeout,
     )
     print(f"created cloud weaviate client for cluster '{args.weaviate_cluster_url}'")
 else:
@@ -63,6 +64,7 @@ else:
         port=args.weaviate_port,
         grpc_port=args.weaviate_grpc_port,
         collection_name=args.weaviate_collection_name,
+        init_timeout=args.weaviate_connect_timeout,
     )
     print(f"created local weaviate client for host '{args.weaviate_host}'")
 

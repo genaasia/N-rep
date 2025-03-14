@@ -5,7 +5,7 @@ except ImportError:
     sys.path.append("../../src")
 from text2sql import hello
 assert hello.message == "hello, world!", "Something went wrong importing text2sql :("
-
+ 
 import argparse
 import atexit
 import json
