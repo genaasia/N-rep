@@ -97,7 +97,7 @@ def single_sample_pipe(
         logger.error(f"An error occurred before prediction: {e}\nTraceback:\n{error_traceback}")
         # Handle errors that occur before prediction
         output["error"] = str(e)
-        output["predictions"] = None
+        output["predictions"] = []
         output["is_valid"] = False
         output["execution_error"] = str(e)
         return output
