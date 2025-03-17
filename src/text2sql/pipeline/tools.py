@@ -15,7 +15,7 @@ from text2sql.engine.generation.postprocessing import (
 from text2sql.engine.prompts import (
     ESQLCoTPromptFormatter,
     GenaCoTPromptFormatter,
-    GenaCoTwEvidencePromptFormatter
+    GenaCoTwEvidencePromptFormatter,
     LegacyFewShotPromptFormatter,
     SimplePromptFormatter,
 )
