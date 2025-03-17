@@ -174,8 +174,13 @@ def save_results(test_results, eval_results, file_name, settings):
     transformed = {}
     for key in next(iter(eval_results.values())).keys():
         transformed[key] = [entry[key] for entry in eval_results.values()]
+
+    if len(eval_results.keys()) == 1:
+        model_names = [" ".join(file_name.split("_")[:-1])]
+    else:
+        model_names = eval_results.keys()
     plot_accuracy(
-        eval_results.keys(),
+        model_names,
         transformed.values(),
         transformed.keys(),
         plot_file_path,
