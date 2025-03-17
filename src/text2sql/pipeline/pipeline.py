@@ -331,6 +331,8 @@ class ConsistencyPipeline(Pipeline):
         else:
             db_name = self.db_name
             schema_description = self.schema_description
+        
+        schema_description = test_sample["predicted_filtered_schema_txt"] # Here is where I manually override the schema
 
         inference_result = single_sample_pipe(
             test_sample,

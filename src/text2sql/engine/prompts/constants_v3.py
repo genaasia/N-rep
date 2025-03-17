@@ -147,7 +147,7 @@ GENA_USER_EXAMPLE_TEMPLATE = "text query: {user_question}\nplease give me a {sql
 
 
 GENA_USER_QUERY_TEMPLATE = "today's date: {current_date}\ntext query: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
-GENA_USER_QUERY_NO_DATE_TEMPLATE = "text query: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
+GENA_USER_QUERY_NO_DATE_TEMPLATE = "database schema description: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
 
 
 GENA_ASSISTANT_TEMPLATE = "```sql\n{sql_query}\n```"
@@ -375,10 +375,8 @@ If the user's question is ambiguous or unclear, you must make your best reasonab
 Translate the user's intent into a **single valid {sql_dialect} query** based on the schema provided.  
 Pay special attention to the examples given by the user.  
 Ensure the query is optimized, precise, and error-free.  
-You must ONLY output the chain of thought reasoning steps and ONE SINGLE valid SQL query as markdown codeblock; do NOT output any other text.
-
-database schema description:
-
-{schema_description}"""
+You must ONLY output the chain of thought reasoning steps and ONE SINGLE valid SQL query as markdown codeblock; do NOT output any other text."""
 
 GENA_USER_QUERY_EVIDENCE_TEMPLATE = "text query: {user_question}\nhint:{evidence}\nplease give me a {sql_dialect} SQL query as markdown code block."
+GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE = "database schema description: {schema_description}\n\ntext query: {user_question}\nhint:{evidence}\nplease give me a {sql_dialect} SQL query as markdown code block."
+GENA_USER_QUERY_SCHEMA_TEMPLATE = "database schema description: {schema_description}\n\ntext query: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
