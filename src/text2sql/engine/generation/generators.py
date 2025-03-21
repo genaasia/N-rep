@@ -5,11 +5,12 @@ from typing import Callable
 
 import tqdm
 
-from openai import AzureOpenAI
+from together import Together
+from openai import AzureOpenAI, OpenAI
 import google.generativeai as genai
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
-from text2sql.engine.clients import get_azure_client, get_bedrock_client
+from text2sql.engine.clients import get_azure_client, get_bedrock_client, get_openai_client, get_togetherai_client
 from text2sql.engine.generation.converters import convert_messages_to_bedrock_format
 
 
@@ -94,7 +95,7 @@ class BedrockGenerator:
                 messages=formatted_messages,
                 **kwargs,
             )
-        return self.post_func(response["output"]["message"]["content"][0]["text"])
+        return self.post_func(response["output"]["message"]["content"][-1]["text"])
 
     
 class GCPGenerator:
@@ -137,3 +138,69 @@ class GCPGenerator:
 
         result = chat.send_message(messages[-1]["content"])
         return self.post_func(result.text)
+
+
+class OpenAIGenerator:
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        post_func: Callable[[str], str] = identity,
+        base_url: str | None = None,
+        **kwargs,
+    ):
+        """generate text using OpenAI client
+        can be used for DeepSeek as well
+
+        Args:
+            api_key (str): api key for OpenAI or DeepSeek
+            model (str): model identifier
+            base_url (str): base url for API calls
+            kwargs: additional openai client specific arguments
+
+        """
+        self.model = model
+        self.post_func = post_func  
+        self.client: OpenAI = get_openai_client(
+            api_key=api_key,
+            base_url=base_url,
+            **kwargs
+        )
+
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
+        """embed one batch of texts with OpenAI client"""
+        chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
+        return self.post_func(chat_completion.choices[0].message.content)
+
+
+class TogetherAIGenerator:
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        post_func: Callable[[str], str] = identity,
+        **kwargs,
+    ):
+        """generate text with together.ai
+
+        Args:
+            api_key (str): api key for together.ai
+            model (str): model identifier
+            kwargs: additional openai client specific arguments
+
+        """
+        self.model = model
+        self.post_func = post_func  
+        self.client: Together = get_togetherai_client(
+            api_key=api_key,
+            **kwargs
+        )
+
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
+        """embed one batch of texts with Together AI client"""
+        chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
+        return self.post_func(chat_completion.choices[0].message.content)

@@ -5,6 +5,8 @@ from text2sql.engine.generation import (
     AzureGenerator, 
     BedrockGenerator,
     GCPGenerator,
+    OpenAIGenerator,
+    TogetherAIGenerator
 )
 from text2sql.engine.generation.postprocessing import (
     extract_first_code_block, 
@@ -13,7 +15,9 @@ from text2sql.engine.generation.postprocessing import (
 from text2sql.engine.prompts import (
     ESQLCoTPromptFormatter,
     GenaCoTPromptFormatter,
+    GenaCoTwEvidencePromptFormatter,
     LegacyFewShotPromptFormatter,
+    SimplePromptFormatter,
 )
 
 
@@ -40,6 +44,19 @@ def get_generator(generator_name, model, post_func):
             model=model,
             post_func=post_func,
         )
+    elif generator_name == "openai":
+        generator = OpenAIGenerator(
+            api_key=os.environ.get("OPENAI_CLIENT_API_KEY"),
+            model=model,
+            post_func=post_func,
+            base_url=os.environ.get("OPENAI_BASE_URL"),
+        )
+    elif generator_name == "togetherai":
+        generator = TogetherAIGenerator(
+            api_key=os.environ.get("TOGETHERAI_API_KEY"),
+            model=model,
+            post_func=post_func,
+        )
     else:
         raise Exception(f"No known generator with the name {generator_name}")
     return generator
@@ -52,6 +69,10 @@ def get_formatter(formatter_name, database_type, add_date):
         formatter = ESQLCoTPromptFormatter(database_type=database_type)
     elif formatter_name == "GENACoT":
         formatter = GenaCoTPromptFormatter(database_type=database_type, add_date=add_date)
+    elif formatter_name == "SimpleReasoner":
+        formatter = SimplePromptFormatter(database_type=database_type)
+    elif formatter_name == "GenaCoTwEvidence":
+        formatter = GenaCoTwEvidencePromptFormatter(database_type=database_type)
     else:
         raise Exception(f"No known formatter with the name {formatter_name}")
     return formatter

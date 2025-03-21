@@ -27,10 +27,11 @@ class PipeConfig:
     rewrite: bool = False
     repair: bool = False
     add_date: bool = True
+    use_evidence: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "schema": self.schema,
+            "formatter": self.formatter,
             "rewrite": self.rewrite,
             "repair": self.repair,
             "add_date": self.add_date,
@@ -39,6 +40,7 @@ class PipeConfig:
             "generator": self.generator.to_dict(),
             "candidate_count": self.candidate_count,
             "pipe_name": self.pipe_name,
+            "use_evidence": self.use_evidence
         }
 
     @classmethod
@@ -47,7 +49,7 @@ class PipeConfig:
         generator = GeneratorConfig(
             name=generator_data["name"],
             model=generator_data["model"],
-            top_k=generator_data["top_k"],
+            top_k=generator_data.get("top_k", 0),
             config=generator_data.get("config"),
         )
         return cls(
@@ -55,6 +57,7 @@ class PipeConfig:
             rewrite=data.get("rewrite", False),
             repair=data.get("repair", False),
             add_date=data.get("add_date", True),
+            use_evidence=data.get("use_evidence", False),
             schema=data["schema"],
             postfunc=data["postfunc"],
             generator=generator,
@@ -89,59 +92,73 @@ class Settings:
         with open(yaml_path, "r") as f:
             config = yaml.safe_load(f)
 
+        # Extract values from nested structure
+        inputs = config.get("inputs", {})
+        outputs = config.get("outputs", {})
+        data = config.get("data", {})
+        processing = config.get("processing", {})
+        
         # Convert pipe configurations to PipeConfig objects
         pipe_configs = [
             PipeConfig.from_dict(pipe_config)
-            for pipe_config in config["pipe_configurations"]
+            for pipe_config in config.get("pipe_configurations", [])
         ]
 
         return cls(
-            log_folder=Path(config["log_folder"]),
-            outputs_folder=Path(config["outputs_folder"]),
-            results_folder=Path(config["results_folder"]),
-            inference_folder=Path(config["inference_folder"]),
-            plots_folder=Path(config["plots_folder"]),
-            train_file_path=Path(config["train_file_path"]),
-            train_embedding_file_path=Path(config["train_embedding_file_path"]),
-            test_file_path=Path(config["test_file_path"]),
-            collection_name=config["collection_name"],
-            database_type=config["database_type"],
-            question_key=config["question_key"],
-            target_sql_key=config["target_sql_key"],
-            db_name_key=config["db_name_key"],
-            benchmark=config["benchmark"],
-            batch_size=config["batch_size"],
-            max_workers=config["max_workers"],
+            # Outputs section
+            log_folder=Path(outputs.get("log_folder", config.get("log_folder", "./logs"))),
+            outputs_folder=Path(outputs.get("outputs_folder", config.get("outputs_folder", "./outputs"))),
+            results_folder=Path(outputs.get("results_folder", config.get("results_folder", "./results"))),
+            plots_folder=Path(outputs.get("plots_folder", config.get("plots_folder", "./plots"))),
+            inference_folder=Path(outputs.get("inference_folder", config.get("inference_folder", "./inference"))),
+            
+            # Data section
+            database_type=data.get("database_type", config.get("database_type", "sqlite")),
+            collection_name=data.get("collection_name", config.get("collection_name", "default_collection")),
+            question_key=data.get("question_key", config.get("question_key", "question")),
+            target_sql_key=data.get("target_sql_key", config.get("target_sql_key", "SQL")),
+            db_name_key=data.get("db_name_key", config.get("db_name_key", None)),
+            benchmark=data.get("benchmark", config.get("benchmark", False)),
+
+            # Inputs section
+            train_file_path=Path(inputs.get("train_file_path", config.get("train_file_path", ""))),
+            train_embedding_file_path=Path(inputs.get("train_embedding_file_path", config.get("train_embedding_file_path", ""))),
+            test_file_path=Path(inputs.get("test_file_path", config.get("test_file_path", ""))),
+            
+            # Processing section
+            batch_size=processing.get("batch_size", config.get("batch_size", 1)),
+            max_workers=processing.get("max_workers", config.get("max_workers", 1)),
+            
+            # Pipeline configurations
             pipe_configurations=pipe_configs,
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert settings to a dictionary."""
+        """Convert settings to a nested dictionary."""
         return {
-            "log_folder": str(self.log_folder),
-            "outputs_folder": str(self.outputs_folder),
-            "results_folder": str(self.results_folder),
-            "train_file_path": str(self.train_file_path),
-            "train_embedding_file_path": str(self.train_embedding_file_path),
-            "test_file_path": str(self.test_file_path),
-            "collection_name": str(self.collection_name),
-            "database_type": str(self.database_type),
-            "question_key": str(self.question_key),
-            "target_sql_key": str(self.target_sql_key),
-            "db_name_key": str(self.db_name_key),
-            "benchmark": str(self.benchmark),
-            "batch_size": self.batch_size,
-            "pipe_configurations": [
-                {
-                    "formatter": pc.formatter,
-                    "schema": pc.schema,
-                    "generator": {
-                        "name": pc.generator.name,
-                        "config": pc.generator.config,
-                    },
-                    "candidate_count": pc.candidate_count,
-                    "pipe_name": pc.pipe_name,
-                }
-                for pc in self.pipe_configurations
-            ],
+            "inputs": {
+                "train_file_path": str(self.train_file_path),
+                "train_embedding_file_path": str(self.train_embedding_file_path),
+                "test_file_path": str(self.test_file_path),
+            },
+            "outputs": {
+                "log_folder": str(self.log_folder),
+                "outputs_folder": str(self.outputs_folder),
+                "results_folder": str(self.results_folder),
+                "plots_folder": str(self.plots_folder),
+                "inference_folder": str(self.inference_folder),
+            },
+            "data": {
+                "type": self.database_type,
+                "collection_name": self.collection_name,
+                "question_key": self.question_key,
+                "target_sql_key": self.target_sql_key,
+                "benchmark": self.benchmark,
+                "db_name_key": self.db_name_key,
+            },
+            "processing": {
+                "batch_size": self.batch_size,
+                "max_workers": self.max_workers,
+            },
+            "pipe_configurations": [pc.to_dict() for pc in self.pipe_configurations],
         }

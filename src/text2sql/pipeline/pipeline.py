@@ -7,7 +7,7 @@ from loguru import logger
 from text2sql.utils.postprocess import extract_sql_query, normalize_sql, get_table_names_from_query
 from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.prompts import BasePromptFormatter
-
+from text2sql.pipeline.settings import GeneratorConfig
 
 def generate_and_measure(generate_func, messages, generator_config):
     start = time()
@@ -22,7 +22,7 @@ def generate_and_measure(generate_func, messages, generator_config):
 def single_sample_pipe(
     test_sample: Dict,
     formatter: BasePromptFormatter,
-    generator,
+    generator: GeneratorConfig,
     schema_description: str,
     generator_config,
     question_key: str,
@@ -31,28 +31,33 @@ def single_sample_pipe(
     self_consistency: int = 1,
     embedder=None,
     retriever=None,
+    use_evidence=False,
     top_k=3,
 ) -> Dict:
     """Process a single test sample using threads."""
     output = test_sample.copy()
     try:
         sample_query = test_sample[question_key]
-        if "evidence" in test_sample:
-            sample_query = sample_query + "\nHint:" + test_sample["evidence"]
 
         # Create chat messages
-        if embedder and retriever:
-            if top_k:
-                search_results = retriever.query(embedder.embed(sample_query), top_k=top_k)
-            else:
-                search_results = []
-            messages = formatter.generate_messages(
-                schema_description=schema_description,
-                query=sample_query,
-                few_shot_examples=search_results,
-            )
-        else:
-            messages = formatter.generate_messages(schema_description=schema_description, query=sample_query)
+        search_results = []
+        if embedder and retriever and top_k:
+            search_results = retriever.query(embedder.embed(sample_query), top_k=top_k)
+
+        generate_message_params = {
+                "schema_description":schema_description,
+                "query":sample_query
+        }
+        if search_results:
+            generate_message_params.update({
+                "few_shot_examples":search_results,
+            })
+        if use_evidence:
+            generate_message_params.update({
+                "evidence": test_sample["evidence"],
+            })
+
+        messages = messages = formatter.generate_messages(**generate_message_params)
 
         # Retry logic for generate
         last_error = None
@@ -92,7 +97,7 @@ def single_sample_pipe(
         logger.error(f"An error occurred before prediction: {e}\nTraceback:\n{error_traceback}")
         # Handle errors that occur before prediction
         output["error"] = str(e)
-        output["predictions"] = None
+        output["predictions"] = []
         output["is_valid"] = False
         output["execution_error"] = str(e)
         return output
@@ -179,6 +184,7 @@ class ConsistencyPipeline(Pipeline):
         repair_formatter: BasePromptFormatter | None = None,
         rewrite_formatter: BasePromptFormatter | None = None,
         db_name_key: str | None = None,
+        evidence: bool = False,
     ):
         self.formatter = formatter
         self.generator = generator
@@ -198,6 +204,8 @@ class ConsistencyPipeline(Pipeline):
         self.schema = db_instance.get_database_schema(db_name)
         self.db_name_key = db_name_key
         self.post_func = post_func
+
+        self.evidence = evidence
 
     def _get_filtered_schema_description(self, prediction):
         table_names = get_table_names_from_query(prediction)
@@ -336,6 +344,7 @@ class ConsistencyPipeline(Pipeline):
             self.self_consistency,
             self.embedder,
             self.retriever,
-            self.top_k,
+            use_evidence=self.evidence,
+            top_k=self.top_k,
         )
         return self.validate_and_update_inferences(inference_result, test_sample, db_name)

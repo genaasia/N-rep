@@ -1,33 +1,15 @@
-import io
 from multiprocessing import Pool, cpu_count
-from contextlib import redirect_stdout
-import sqlfluff
+from txt2sql.metrics import sql_match
 import pandas as pd
 from time import time
 
 from .match_utils import get_match_for_valid_exec
 
 
-def normalize_query(query):
-    try:
-        f = io.StringIO()
-        with redirect_stdout(f):
-            formatted_query = sqlfluff.fix(query, dialect="ansi")
-        return formatted_query
-    except Exception as e:
-        # return original query
-        print(f"Error in formatting query: {query}. Returning original query.")
-        return query
-
-
-def get_sql_match(pred_sql, label_sql):
-    return normalize_query(pred_sql) == normalize_query(label_sql)
-
-
 def process_chunk(args):
     chunk_index, chunk, sql_col, pred_sql_col = args
     result = chunk.apply(
-        lambda row: get_match_for_valid_exec("sql_match", get_sql_match, row[pred_sql_col], row[sql_col], row["Fail"]),
+        lambda row: get_match_for_valid_exec("sql_match", sql_match, row[pred_sql_col], row[sql_col], row["Fail"]),
         axis=1,
     )
     return chunk_index, result

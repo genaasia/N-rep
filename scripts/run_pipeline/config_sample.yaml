@@ -1,18 +1,26 @@
-log_folder: ./logs
-outputs_folder : ./outputs_100_sc
-results_folder: ./results_100_sc
-plots_folder: ./plots_100_sc
-inference_folder: ./inference_100_sc
-database_type: postgres
-train_file_path: ./data/packative_nl2sql_train_en_20241114.csv
-train_embedding_file_path: ./data/packative_nl2sql_train_en_20241114_embedding.npy
-test_file_path: ./data/packative_nl2sql_eval_fixed20241119_20241128.csv
-collection_name: packative_collection_1
-batch_size: null
-max_workers: 4
+outputs:
+  log_folder: ./logs
+  outputs_folder : ./outputs_100_sc
+  results_folder: ./results_100_sc
+  plots_folder: ./plots_100_sc
+  inference_folder: ./inference_100_sc
 
-question_key: question
-target_sql_key: SQL
+inputs:
+  train_file_path: ./data/packative_nl2sql_train_en_20241114.csv
+  test_file_path: ./data/packative_nl2sql_eval_fixed20241119_20241128.csv
+  train_embedding_file_path: ./data/packative_nl2sql_train_en_20241114_embedding.npy
+
+data:
+  database_type: postgres
+  question_key: question
+  target_sql_key: SQL
+  collection_name: packative_collection_1
+  benchmark: false
+
+processing:
+  batch_size: null
+  max_workers: 4
+
 
 pipe_configurations:
   - formatter: GENACoT
@@ -51,3 +59,39 @@ pipe_configurations:
       top_k: 8
     candidate_count: 3
     pipe_name: pipe_v3
+  - formatter: GENACoT
+    schema: basic_types_relations
+    postfunc: extract_first_code_block
+    generator:
+      name: aws-bedrock
+      model: us.anthropic.claude-3-7-sonnet-20250219-v1:0
+      config:
+        inferenceConfig:
+          maxTokens: 20000
+        additionalModelRequestFields:
+          thinking:
+            type: enabled
+            budget_tokens: 16000
+      top_k: 0
+    candidate_count: 1
+    pipe_name: pipe_v1_basic_types_relations
+  - formatter: GENACoT
+    schema: basic_types_relations
+    postfunc: extract_first_code_block
+    generator:
+      name: openai
+      model: deepseek-chat
+      config:
+      top_k: 0
+    candidate_count: 1
+    pipe_name: pipe_v1_basic_types_relations
+  - formatter: GENACoT
+    schema: basic_types_relations
+    postfunc: extract_first_code_block
+    generator:
+      name: togetherai
+      model: deepseek-ai/DeepSeek-R1
+      config:
+      top_k: 0
+    candidate_count: 1
+    pipe_name: pipe_v1_basic_types_relations

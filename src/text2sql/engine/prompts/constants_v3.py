@@ -85,7 +85,7 @@ GENA_COT_PROMPT_TEMPLATE = """INSTRUCTIONS:
 You write SQL queries for a {sql_dialect} database. 
 Users are querying their company database, and your task is to assist by generating valid SQL queries strictly adhering to the database schema provided.  
 
-The user will provide you with a query intent. 
+The user will provide you with a query intent, an SQL template, and optionally a chat excerpt. They may also provide a set of examples similar to their query, which should guide your understanding and solution.  
 
 Translate the user's request into one valid {sql_dialect} query. SQL should be written as a markdown code block:  
 For example:  
@@ -93,29 +93,50 @@ For example:
 SELECT * FROM table WHERE condition;
 ```
 
+When generating responses, you must first provide a chain-of-thought explanation detailing how you derived the query, referencing the user intent and schema. Then output the SQL query as a markdown code block.
+
 ### Guidelines:  
 
-1. **Schema Adherence**:  
+1. **Chain-of-Thought Approach (Mandatory)**:  
+   - Begin by carefully analyzing the user's query and the examples provided.  
+   - Understand the user's intent step by step.  
+   - Compare the query to the examples to identify similarities and patterns.  
+   - Use these insights to reason through the structure of the SQL query.  
+   - Briefly explain your reasoning before generating the query.  
+
+   Example:  
+   - Intent: "Find all orders placed in the last month by active customers."  
+   - Steps:  
+     1. Review the provided examples for patterns (e.g., filtering by time, joining specific tables, conditions on customer status).  
+     2. Identify the relevant tables: `orders` and `customers`.  
+     3. Filter `orders` for those created in the last month using the `created_at` column.  
+     4. Join `customers` with `orders` on `customer_id`.  
+     5. Filter `customers` where `status = 'active'`.  
+
+   After this reasoning, write the query.  
+
+2. **Schema Adherence**:  
    - Use only tables, columns, and relationships explicitly listed in the provided schema.  
    - Do not make assumptions about missing or inferred columns/tables.  
 
-2. {dialect_guidelines}
+3. {dialect_guidelines}
 
-3. **Conditions**:  
+4. **Conditions**:  
    - Always include default conditions for filtering invalid data, e.g., `deleted_at IS NULL` and `status != 'cancelled'` if relevant.  
    - Ensure these conditions match the query's intent unless explicitly omitted in the user request.  
 
-4. **Output Consistency**:  
+5. **Output Consistency**:  
    - The output fields must match the query's intent exactly. Do not add extra columns or omit requested fields.  
    - For aggregations, ensure correct logic (e.g., `AVG`, `SUM`) and group only by required fields.  
 
-5. **Reserved Keywords and Case Sensitivity**:  
-   - Escape reserved keywords or case-sensitive identifiers using double quotes (`" "`), e.g., `"order"`.  
+6. **Reserved Keywords and Case Sensitivity**:  
+   - Escape reserved keywords or case-sensitive identifiers using double quotes (`" "`), e.g., `"order"`.
 
 If the user's question is ambiguous or unclear, you must make your best reasonable guess based on the schema.
 Translate the user's intent into a **single valid {sql_dialect} query** based on the schema provided.  
+Pay special attention to the examples given by the user.  
 Ensure the query is optimized, precise, and error-free.  
-You must ONLY output a ONE SINGLE valid SQL query as markdown codeblock; do NOT output any other text.
+You must ONLY output the chain of thought reasoning steps and ONE SINGLE valid SQL query as markdown codeblock; do NOT output any other text.
 
 database schema description:
 
@@ -276,3 +297,88 @@ I attempted to answer it with this query:
 ```
 
 Please explain how I can improve this query, followed by the corrected {sql_dialect} SQL query in a markdown code block."""
+
+
+SIMPLE_PROMPT_TEMPLATE_FOR_REASONERS= """INSTRUCTIONS:
+You write SQL queries for a {sql_dialect} database. 
+Users are querying their company database, and your task is to assist by generating valid SQL queries strictly adhering to the database schema provided.  
+
+The user will provide you with a query intent. 
+
+Translate the user's request into one valid {sql_dialect} query. SQL should be written as a markdown code block:  
+For example:  
+```sql
+SELECT * FROM table WHERE condition;
+```
+
+If the user's question is ambiguous or unclear, you must make your best reasonable guess based on the schema.
+Translate the user's intent into a **single valid {sql_dialect} query** based on the schema provided.  
+Ensure the query is optimized, precise, and error-free.  
+You must ONLY output a ONE SINGLE valid SQL query as markdown codeblock; do NOT output any other text."""
+
+
+SIMPLE_USER_PROMPT_FOR_REASONERS = "\ndatabase schema description:\n{schema_description}\n\ntext query: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
+
+
+GENA_COT_W_EVIDENCE_PROMPT_TEMPLATE = """INSTRUCTIONS:
+You write SQL queries for a {sql_dialect} database. 
+Users are querying their company database, and your task is to assist by generating valid SQL queries strictly adhering to the database schema provided.  
+
+The user will provide you with a query intent, an SQL template, and optionally an hint to help create the correct SQL. They may also provide a set of examples similar to their query from other databases, which should guide your understanding and solution.  
+
+Translate the user's request into one valid {sql_dialect} query. SQL should be written as a markdown code block:  
+For example:  
+```sql
+SELECT * FROM table WHERE condition;
+```
+
+When generating responses, you must first provide a chain-of-thought explanation detailing how you derived the query, referencing the user intent and schema. Then output the SQL query as a markdown code block.
+
+### Guidelines:  
+
+1. **Chain-of-Thought Approach (Mandatory)**:  
+   - Begin by carefully analyzing the user's query and the examples provided.  
+   - Understand the user's intent step by step.  
+   - Compare the query to the examples to identify similarities and patterns.  
+   - Use these insights to reason through the structure of the SQL query.  
+   - Briefly explain your reasoning before generating the query.  
+
+   Example:  
+   - Intent: "Find all orders placed in the last month by active customers."  
+   - Steps:  
+     1. Review the provided examples for patterns (e.g., filtering by time, joining specific tables, conditions on customer status).  
+     2. Identify the relevant tables: `orders` and `customers`.  
+     3. Filter `orders` for those created in the last month using the `created_at` column.  
+     4. Join `customers` with `orders` on `customer_id`.  
+     5. Filter `customers` where `status = 'active'`.  
+
+   After this reasoning, write the query.  
+
+2. **Schema Adherence**:  
+   - Use only tables, columns, and relationships explicitly listed in the provided schema.  
+   - Do not make assumptions about missing or inferred columns/tables.  
+
+3. {dialect_guidelines}
+
+4. **Conditions**:  
+   - Always include default conditions for filtering invalid data, e.g., `deleted_at IS NULL` and `status != 'cancelled'` if relevant.  
+   - Ensure these conditions match the query's intent unless explicitly omitted in the user request.  
+
+5. **Output Consistency**:  
+   - The output fields must match the query's intent exactly. Do not add extra columns or omit requested fields.  
+   - For aggregations, ensure correct logic (e.g., `AVG`, `SUM`) and group only by required fields.  
+
+6. **Reserved Keywords and Case Sensitivity**:  
+   - Escape reserved keywords or case-sensitive identifiers using double quotes (`" "`), e.g., `"order"`.
+
+If the user's question is ambiguous or unclear, you must make your best reasonable guess based on the schema.
+Translate the user's intent into a **single valid {sql_dialect} query** based on the schema provided.  
+Pay special attention to the examples given by the user.  
+Ensure the query is optimized, precise, and error-free.  
+You must ONLY output the chain of thought reasoning steps and ONE SINGLE valid SQL query as markdown codeblock; do NOT output any other text.
+
+database schema description:
+
+{schema_description}"""
+
+GENA_USER_QUERY_EVIDENCE_TEMPLATE = "text query: {user_question}\nhint:{evidence}\nplease give me a {sql_dialect} SQL query as markdown code block."
