@@ -33,6 +33,7 @@ from text2sql.engine.prompts.constants_v3 import (
      GENA_ASSISTANT_TEMPLATE,
      REWRITE_PROMPT_TEMPLATE,
      REWRITE_USER_MESSAGE_TEMPLATE,
+     GENA_USER_QUERY_SCHEMA_TEMPLATE
 )
 
 
@@ -408,9 +409,12 @@ class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
         for example in few_shot_examples:
             example_query = example["data"][self.few_shot_query_key]
             example_sql = example["data"][self.few_shot_target_key]
-            exmaple_evidence = example["data"]["evidence"]
             exmaple_desc = example["data"]["gold_filtered_schema"]
-            messages.append({"role": "user", "content": GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(schema_description=exmaple_desc, user_question=example_query, evidence=exmaple_evidence, sql_dialect=self.database_type)})
+            if "evidence" in example["data"]:
+                exmaple_evidence = example["data"]["evidence"]
+                messages.append({"role": "user", "content": GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(schema_description=exmaple_desc, user_question=example_query, evidence=exmaple_evidence, sql_dialect=self.database_type)})
+            else:
+                messages.append({"role": "user", "content": GENA_USER_QUERY_SCHEMA_TEMPLATE.format(schema_description=exmaple_desc, user_question=example_query, sql_dialect=self.database_type)})
             messages.append({"role": "assistant", "content": GENA_ASSISTANT_TEMPLATE.format(sql_query=example_sql)})
 
         query_message = GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(
