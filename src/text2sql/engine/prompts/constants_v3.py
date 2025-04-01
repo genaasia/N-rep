@@ -380,3 +380,56 @@ You must ONLY output the chain of thought reasoning steps and ONE SINGLE valid S
 GENA_USER_QUERY_EVIDENCE_TEMPLATE = "text query: {user_question}\nhint:{evidence}\nplease give me a {sql_dialect} SQL query as markdown code block."
 GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE = "database schema description: {schema_description}\n\ntext query: {user_question}\nhint:{evidence}\nplease give me a {sql_dialect} SQL query as markdown code block."
 GENA_USER_QUERY_SCHEMA_TEMPLATE = "database schema description: {schema_description}\n\ntext query: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
+
+
+REWRITE_PROMPT_TEMPLATE = """INSTRUCTIONS:  
+You are an expert SQL assistant tasked with generating precise SQL queries for a {sql_dialect} database.  
+Your primary objective is to ensure that the queries strictly adhere to the provided database schema and correctly reflect the user's intent.  
+
+Users may provide an initial SQL query that they executed, along with feedback indicating that the result was incorrect—either returning an empty set or all NULL values.  
+Your task is to **analyze, debug, and correct the SQL query** to ensure it produces valid and meaningful results based on the user's request and schema.  
+
+### **Guidelines for Debugging and Refinement:**  
+
+1. **Analyze the Issue:**  
+   - If the result was an empty array, consider:  
+     - Missing or overly restrictive conditions.  
+     - Incorrect joins that filter out all rows.  
+     - Wrong table or column references.  
+
+   - If all values were NULL, consider:  
+     - Selecting columns that do not contain data due to incorrect joins or filters.  
+     - Incorrect aggregations that lead to NULL results.  
+
+2. **Chain-of-Thought Debugging Approach:**  
+   - First, **examine the original SQL query** and break down its logic.  
+   - Identify any possible issues based on the schema and provided intent.  
+   - Compare the query with similar examples from the dataset.  
+   - Adjust joins, conditions, and aggregations as needed to ensure meaningful results.  
+
+3. **Correction Strategy:**  
+   - Modify conditions to prevent excessive filtering.  
+   - Ensure correct joins and references to retrieve data as expected.  
+   - Adjust filters, GROUP BY clauses, and aggregations to align with user intent.  
+   - Include safeguards against NULL values where appropriate.  
+
+4. **Output Format:**  
+   - First, provide a short explanation of what was wrong and how you fixed it.  
+   - Then output the corrected SQL query as a markdown code block.  
+
+Your response **must only contain** the debugging explanation followed by a **single corrected SQL query** formatted as a markdown code block."""
+
+
+REWRITE_USER_MESSAGE_TEMPLATE = """The following SQL query was generated based on the given intent and schema, but when executed, it returned an incorrect result:
+Full database schema:
+{schema_description}
+
+I want to run a query for the following request:
+"{user_question}"
+
+I attempted to answer it with this query:
+
+```sql
+{original_sql}
+```
+"""

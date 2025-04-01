@@ -24,7 +24,7 @@ from text2sql.data.sqlite_functions import analyze_database
 from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
-from text2sql.engine.prompts import GenaRepairPromptFormatter, GenaRewritePromptFormatter
+from text2sql.engine.prompts import GenaRepairPromptFormatter, RewritePromptFormatter
 from text2sql.engine.generation import identity
 from text2sql.pipeline.settings import PipeConfig
 
@@ -67,7 +67,7 @@ def run_inference(eval_data, pipe_configuration: PipeConfig, settings: Settings,
 
     # CREATE REPAIR AND REWRITE PROMPT FORMATTER
     repair_formatter = GenaRepairPromptFormatter(database_type=database_type) if pipe_configuration.repair else None
-    rewrite_formatter = GenaRewritePromptFormatter(database_type=database_type) if pipe_configuration.rewrite else None
+    rewrite_formatter = RewritePromptFormatter(database_type=database_type) if pipe_configuration.rewrite else None
 
     # GET POST FUNCTION
     post_func = get_postfunc(pipe_configuration.postfunc)

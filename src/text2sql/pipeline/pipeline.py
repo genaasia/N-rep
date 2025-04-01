@@ -5,9 +5,28 @@ from time import time
 
 from loguru import logger
 from text2sql.utils.postprocess import extract_sql_query, normalize_sql, get_table_names_from_query
+from text2sql.engine.generation.postprocessing import extract_first_code_block
 from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.prompts import BasePromptFormatter
 from text2sql.pipeline.settings import GeneratorConfig
+
+
+def check_need_rewrite(result):
+    if len(result) == 0:
+        return True
+    else:
+        has_non_none = False
+        for result_row in result:
+            for value in result_row.values():
+                if value is not None and value != "" and value != [] and value != 0 and value != 0.0:
+                    has_non_none = True
+                    break
+            if has_non_none:
+                break
+        if not has_non_none:
+            return True
+    return False
+
 
 def generate_and_measure(generate_func, messages, generator_config):
     start = time()
@@ -238,17 +257,34 @@ class ConsistencyPipeline(Pipeline):
                 "inference_time_secs": inference_time,
             }
             if results.get("validated"):
-                if self.rewrite_formatter:
+                if self.rewrite_formatter and check_need_rewrite(results.get("execution_result")):
                     repaired_prediction, rewrite_inference_time = self.run_rewrite(
                         test_sample, prediction, filtered_schema_description
                     )
-                    repaired_results = self.db_instance.validate_query(db_name, prediction)
+                    try:
+                        repaired_prediction = extract_sql_query(extract_first_code_block(repaired_prediction))
+                        repaired_results = self.db_instance.validate_query(db_name, repaired_prediction)
+                    except Exception as e:
+                        repaired_prediction = prediction
+                        repaired_results = results
                     if repaired_results.get("validated"):
                         results = repaired_results
+                    counter = 0
+                    while repaired_results.get("validated") and check_need_rewrite(repaired_results.get("execution_result")) and counter < 2:
+                        repaired_prediction, rewrite_inference_time = self.run_rewrite(
+                            test_sample, repaired_prediction, filtered_schema_description
+                        )
+                        try:
+                            repaired_prediction = extract_sql_query(extract_first_code_block(repaired_prediction))
+                            repaired_results = self.db_instance.validate_query(db_name, repaired_prediction)
+                        except Exception as e:
+                            print(e)
+                        results = repaired_results
+                        counter += 1
+                    obj.update({"rewrite_inference_time_secs": rewrite_inference_time, "rewritten": True, "rewritten_sql": repaired_prediction})  
                 results = self.db_instance.normalize_db_query_results(results)
                 obj.update({"valid": True, "results": results["execution_result"]})
-                if self.rewrite_formatter and repaired_results.get("validated"):
-                    obj.update({"rewrite_inference_time_secs": rewrite_inference_time, "rewritten": True})
+                
             else:
                 if self.repair_formatter:
                     error_message = results.get("message")
