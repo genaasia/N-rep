@@ -328,6 +328,8 @@ def main():
 
         if settings.batch_size:
             test_data = test_data[:settings.batch_size]
+        
+        has_new_data = False 
         for idx in tqdm.trange(len(test_data)):
             if not "api_execution_result" in test_data[idx]:
                 if settings.benchmark:
@@ -341,12 +343,14 @@ def main():
                 )
                 if result["validated"]:
                     test_data[idx]["api_execution_result"] = result["execution_result"]
+                    has_new_data = True
                 else:
                     logger.error(
                         "api_execution_result is empty and the golden query is not valid!\nSomething seems wrong with your data"
                     )
-        with open(str(settings.test_file_path).replace(".json", ".withdata.json"), "w") as f:
-            json.dump(test_data, f, indent=2)
+        if has_new_data:
+            with open(str(settings.test_file_path).replace(".json", "_withdata.json"), "w") as f:
+                json.dump(test_data, f, indent=2)
         if args.subset:
             test_data = random.sample(test_data, int(args.subset))
         for pipe_configuration in settings.pipe_configurations:
