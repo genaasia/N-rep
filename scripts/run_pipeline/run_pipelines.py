@@ -20,6 +20,7 @@ import tqdm
 from dotenv import load_dotenv
 from loguru import logger
 from text2sql.data import PostgresDataset, MysqlDataset, SqliteDataset, BaseDataset
+from text2sql.data.sqlite_functions import analyze_database
 from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
@@ -207,6 +208,9 @@ def main():
         "--update-embeddings", "-u", default=True, action=argparse.BooleanOptionalAction
     )
     parser.add_argument(
+        "--analyze-dbs", "-a", default=False, action=argparse.BooleanOptionalAction
+    )
+    parser.add_argument(
         "--inference-file",
         "-f",
         default=None,
@@ -314,6 +318,14 @@ def main():
         test_data = reader(settings.test_file_path).to_dict(
                     orient="records"
         )
+
+        if args.analyze_dbs:
+            # analyze dbs to fix hanging queries
+            db_names = {row[settings.db_name_key] for row in test_data}
+            for db_name in db_names:
+                print(f"Analyzing {db_name}")
+                analyze_database(os.environ.get("SQLITE_DB_PATH"), db_name)
+
         if settings.batch_size:
             test_data = test_data[:settings.batch_size]
         for idx in tqdm.trange(len(test_data)):
