@@ -88,6 +88,7 @@ class Settings:
     batch_size: int
     max_workers: int
     pipe_configurations: List[PipeConfig]
+    metrics: List[str] = None  # Default to None to maintain backward compatibility
 
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "Settings":
@@ -100,6 +101,7 @@ class Settings:
         outputs = config.get("outputs", {})
         data = config.get("data", {})
         processing = config.get("processing", {})
+        evaluation = config.get("evaluation", {})
         
         # Convert pipe configurations to PipeConfig objects
         pipe_configs = [
@@ -134,6 +136,9 @@ class Settings:
             
             # Pipeline configurations
             pipe_configurations=pipe_configs,
+            
+            # Evaluation section
+            metrics=evaluation.get("metrics", ["sql_match", "execution_match", "intent", "soft_f1"]),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -162,6 +167,9 @@ class Settings:
             "processing": {
                 "batch_size": self.batch_size,
                 "max_workers": self.max_workers,
+            },
+            "evaluation": {
+                "metrics": self.metrics,
             },
             "pipe_configurations": [pc.to_dict() for pc in self.pipe_configurations],
         }

@@ -9,25 +9,26 @@ from .eval_utils import (
 )
 
 
-def run_eval(predicted_data, target_data, score_cache, target_sql_key):
+def run_eval(predicted_data, target_data, score_cache, target_sql_key, metrics=None):
+    if metrics is None:
+        metrics = ["sql_match", "execution_match", "intent", "soft_f1"]  # Default to all metrics if not specified
+    
     all_methods = {}
     # for method in ["highest_voted_valid", "highest_voted", "upper_bound", "lower_bound"]:
     for method in ["highest_voted_valid"]:
         all_methods[method] = {
-            "sql_match_scores": [],
-            "execution_match_scores": [],
-            "intent_scores": [],
-            "soft_f1_scores": [],
             "valids": [],
         }
+        # Initialize metric-specific lists based on requested metrics
+        for metric in metrics:
+            all_methods[method][f"{metric}_scores"] = []
+            
         for i, predicted_datum in enumerate(tqdm.tqdm(predicted_data)):
             target_datum = target_data[i]
             predictions = predicted_datum["predictions"]
             if not predictions:
-                all_methods[method]["sql_match_scores"].append(False)
-                all_methods[method]["execution_match_scores"].append(False)
-                all_methods[method]["intent_scores"].append(False)
-                all_methods[method]["soft_f1_scores"].append(0.0)
+                for metric in metrics:
+                    all_methods[method][f"{metric}_scores"].append(False)
                 all_methods[method]["valids"].append(False)
                 continue
 
@@ -39,63 +40,45 @@ def run_eval(predicted_data, target_data, score_cache, target_sql_key):
                 target_execution = target_datum["api_execution_result"]
 
             if method == "upper_bound":
-                (
-                    sql_match_score,
-                    execution_match_score,
-                    intent_score,
-                    soft_f1_score,
-                    has_valid,
-                ) = upper_bound_eval(
-                    predictions, target_sql, target_execution, score_cache
+                scores = upper_bound_eval(
+                    predictions, target_sql, target_execution, score_cache, metrics
                 )
+                has_valid = scores[-1]
+                metric_scores = scores[:-1]
             elif method == "lower_bound":
-                (
-                    sql_match_score,
-                    execution_match_score,
-                    intent_score,
-                    soft_f1_score,
-                    has_valid,
-                ) = lower_bound_eval(
-                    predictions, target_sql, target_execution, score_cache
+                scores = lower_bound_eval(
+                    predictions, target_sql, target_execution, score_cache, metrics
                 )
+                has_valid = scores[-1]
+                metric_scores = scores[:-1]
             elif method == "highest_voted":
-                (
-                    sql_match_score,
-                    execution_match_score,
-                    intent_score,
-                    soft_f1_score,
-                    has_valid,
-                ) = highest_voted_eval(
-                    predictions, target_sql, target_execution, score_cache
+                scores = highest_voted_eval(
+                    predictions, target_sql, target_execution, score_cache, metrics
                 )
-
+                has_valid = scores[-1]
+                metric_scores = scores[:-1]
             elif method == "highest_voted_valid":
-                (
-                    sql_match_score,
-                    execution_match_score,
-                    intent_score,
-                    soft_f1_score,
-                    has_valid,
-                    predicted_sql,
-                    predicted_execution,
-                ) = highest_voted_valid_eval(
-                    predictions, target_sql, target_execution, score_cache
+                scores = highest_voted_valid_eval(
+                    predictions, target_sql, target_execution, score_cache, metrics
                 )
+                has_valid = scores[-3]
+                metric_scores = scores[:-3]
+                predicted_sql = scores[-2]
+                predicted_execution = scores[-1]
+                
+                # Store all metric scores in predicted_data
                 predicted_data[i]["highest_voted_valid"] = {
-                    "sql_match_score": sql_match_score,
-                    "execution_match_score": execution_match_score,
-                    "intent_score": intent_score,
-                    "soft_f1_score": soft_f1_score,
                     "predicted_sql": predicted_sql,
                     "predicted_execution": predicted_execution,
                 }
+                for metric, score in zip(metrics, metric_scores):
+                    predicted_data[i]["highest_voted_valid"][f"{metric}_score"] = score
             else:
                 raise Exception(f"Method {method} is not supported")
 
-            all_methods[method]["sql_match_scores"].append(sql_match_score)
-            all_methods[method]["execution_match_scores"].append(execution_match_score)
-            all_methods[method]["intent_scores"].append(intent_score)
-            all_methods[method]["soft_f1_scores"].append(soft_f1_score)
+            # Store scores for each metric
+            for metric, score in zip(metrics, metric_scores):
+                all_methods[method][f"{metric}_scores"].append(score)
             all_methods[method]["valids"].append(has_valid)
 
     all_methods_meaned = {}
