@@ -59,9 +59,11 @@ def single_sample_pipe(
         sample_query = test_sample[question_key]
 
         # Create chat messages
-        search_results = []
+        search_results, distances = [], []
         if embedder and retriever and top_k:
-            search_results = retriever.query(embedder.embed(sample_query), top_k=top_k)
+            embedder_query = test_sample["spacy_masked"]
+            search_results = retriever.query(embedder.embed(embedder_query), top_k=top_k)
+            distances = [sr["distance"] for sr in search_results]
 
         generate_message_params = {
                 "schema_description":schema_description,
@@ -109,6 +111,7 @@ def single_sample_pipe(
         output["predictions"] = predictions_not_grouped
         output["messages"] = messages
         output["llm_output"] = prediction_all
+        output["distances"] = distances
         return output
 
     except Exception as e:
