@@ -51,6 +51,18 @@ def get_sqlite_schema(base_dir: str, database: str) -> dict[str, Any]:
     # Get table names
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = cursor.fetchall()
+    
+    table_primary_keys = {}
+    for table in tables:
+        table_name = table[0]
+        # Get primary key information
+        cursor.execute(f"PRAGMA table_info('{table_name}')")
+        columns = cursor.fetchall()
+        for column in columns:
+            cid, col_name, col_type, is_notnull, default_value, is_pk = column
+            if is_pk:
+                table_primary_keys[table_name] = col_name
+                break
 
     for table in tables:
         table_name = table[0]
@@ -70,6 +82,11 @@ def get_sqlite_schema(base_dir: str, database: str) -> dict[str, Any]:
         foreign_keys = cursor.fetchall()
         for fk in foreign_keys:
             _, _, ref_table, col_name, ref_col, *_ = fk
+
+            # If ref_col is None, use the primary key of the referenced table
+            if ref_col is None or ref_col == "":
+                ref_col = table_primary_keys.get(ref_table)
+                
             schema["tables"][table_name]["foreign_keys"][col_name] = {
                 "referenced_table": ref_table,
                 "referenced_column": ref_col,

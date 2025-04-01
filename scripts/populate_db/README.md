@@ -37,3 +37,13 @@ python populate.py \
   --sql-template-topic label
 ```
 
+## confirm collection data
+
+example
+
+```
+python query_collection_info.py \
+  --use-weaviate-cloud \
+  --weaviate-collection-name Collection_b199b2c66f664e80b6d7b3111c1cd14c_packative \
+  --weaviate-cluster-url https://qbr49scyqeeitim9am2xeq.c0.asia-southeast1.gcp.weaviate.cloud
+```
