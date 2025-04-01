@@ -147,7 +147,7 @@ GENA_USER_EXAMPLE_TEMPLATE = "text query: {user_question}\nplease give me a {sql
 
 
 GENA_USER_QUERY_TEMPLATE = "today's date: {current_date}\ntext query: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
-GENA_USER_QUERY_NO_DATE_TEMPLATE = "database schema description: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
+GENA_USER_QUERY_NO_DATE_TEMPLATE = "text query: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
 
 
 GENA_ASSISTANT_TEMPLATE = "```sql\n{sql_query}\n```"
