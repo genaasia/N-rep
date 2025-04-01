@@ -117,6 +117,7 @@ def run_inference(eval_data, pipe_configuration: PipeConfig, settings: Settings,
         rewrite_formatter,
         settings.db_name_key,
         pipe_configuration.use_evidence,
+        schema_key=pipe_configuration.schema_key,
     )
 
     # RUN PIPELINE OVER DATASET

@@ -185,6 +185,7 @@ class ConsistencyPipeline(Pipeline):
         rewrite_formatter: BasePromptFormatter | None = None,
         db_name_key: str | None = None,
         evidence: bool = False,
+        schema_key: str | None = None,
     ):
         self.formatter = formatter
         self.generator = generator
@@ -206,6 +207,7 @@ class ConsistencyPipeline(Pipeline):
         self.post_func = post_func
 
         self.evidence = evidence
+        self.schema_key = schema_key
 
     def _get_filtered_schema_description(self, prediction):
         table_names = get_table_names_from_query(prediction)
@@ -332,7 +334,8 @@ class ConsistencyPipeline(Pipeline):
             db_name = self.db_name
             schema_description = self.schema_description
         
-        schema_description = test_sample["predicted_filtered_schema_txt"] # Here is where I manually override the schema
+        if self.schema_key:
+            schema_description = test_sample[self.schema_key]
 
         inference_result = single_sample_pipe(
             test_sample,

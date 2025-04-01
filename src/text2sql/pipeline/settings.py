@@ -28,6 +28,7 @@ class PipeConfig:
     repair: bool = False
     add_date: bool = True
     use_evidence: bool = False
+    schema_key: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -40,7 +41,8 @@ class PipeConfig:
             "generator": self.generator.to_dict(),
             "candidate_count": self.candidate_count,
             "pipe_name": self.pipe_name,
-            "use_evidence": self.use_evidence
+            "use_evidence": self.use_evidence,
+            "schema_key": self.schema_key,
         }
 
     @classmethod
@@ -57,6 +59,7 @@ class PipeConfig:
             rewrite=data.get("rewrite", False),
             repair=data.get("repair", False),
             add_date=data.get("add_date", True),
+            schema_key=data.get("schema_key", ""),
             use_evidence=data.get("use_evidence", False),
             schema=data["schema"],
             postfunc=data["postfunc"],
