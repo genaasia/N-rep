@@ -1,4 +1,5 @@
-from typing import Any
+from typing import Any, Dict, List, Optional
+
 
 
 def schema_to_basic_format(
@@ -114,3 +115,79 @@ def schema_to_datagrip_format(database_name: str, schema: dict[str, Any]) -> str
         output.append("")  # Add an empty line between tables
 
     return "\n".join(output)
+
+
+def get_m_schema_column_samples(
+    dataset: "BaseDataset",
+    database_name: str,
+    schema: Dict[str, Any],
+    sample_limit: int = 3,
+    max_distinct_samples: int = 3
+) -> Dict[str, Dict[str, List[Any]]]:
+    """Get sample values for each column in the schema, following m-schema.
+    
+    Args:
+        dataset: The dataset instance to use for querying
+        database_name: Name of the database to query
+        schema: Schema dictionary in the format of tables_columns_json.json
+        sample_limit: Maximum number of samples to return per column (after filtering)
+        max_distinct_samples: Maximum number of distinct samples to fetch from database
+        
+    Returns:
+        Dictionary mapping table names to column names to lists of sample values
+        {
+            "table1": {
+                "column1": ["value1", "value2", "value3"],
+                "column2": ["value4", "value5", "value6"]
+            },
+            ...
+        }
+    """
+    samples = {}
+    
+    for table_name, table_info in schema["tables"].items():
+        samples[table_name] = {}
+        
+        # Process each column separately to get distinct values
+        for col_name, col_type in table_info["columns"].items():
+            # Quote column name to handle special characters and numbers
+            quoted_col = f'"{col_name}"'
+            
+            # Create a query to get distinct sample values for this column
+            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL LIMIT {max_distinct_samples}'
+            
+            try:
+                # Execute the query and get results
+                results = dataset.query_database(database_name, query)
+                
+                # Collect non-None values
+                col_samples = []
+                for row in results:
+                    if col_name in row and row[col_name] is not None:
+                        col_samples.append(str(row[col_name]))  # Convert to string early
+                
+                # Apply m-schema example selection rules
+                if col_samples:
+                    # For date/time types, only show first example
+                    col_type = table_info["columns"][col_name].upper()
+                    if any(t in col_type for t in ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP']):
+                        col_samples = [col_samples[0]]
+                    else:
+                        # Check for long examples
+                        max_len = max(len(s) for s in col_samples)
+                        if max_len > 50:
+                            col_samples = []
+                        elif max_len > 20:
+                            col_samples = [col_samples[0]]
+                        else:
+                            col_samples = col_samples[:sample_limit]
+                
+                # Store the samples for this column
+                samples[table_name][col_name] = col_samples
+                
+            except Exception as e:
+                # If query fails, leave empty samples for this column
+                print(f"Warning: Could not get samples for column {col_name} in table {table_name}: {str(e)}")
+                samples[table_name][col_name] = []
+    
+    return samples
