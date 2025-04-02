@@ -4,7 +4,7 @@ import weaviate
 
 from loguru import logger
 from openai import AsyncAzureOpenAI, AzureOpenAI, OpenAI
-from together import Together
+
 
 def get_azure_client(api_key: str, api_version: str, azure_endpoint: str, **kwargs) -> AzureOpenAI:
     """get azure client"""
@@ -59,9 +59,9 @@ def get_openai_client(api_key: str, base_url: str | None = None) -> OpenAI:
 
 def get_togetherai_client(api_key: str) -> OpenAI:
     """get azure client"""
-    client = Together(
-        api_key=api_key
-    )
+    from together import Together
+
+    client = Together(api_key=api_key)
     return client
 
 
