@@ -253,3 +253,93 @@ def schema_to_m_schema_format(
                 output.append(f"{table_name}.{fk_column}={ref_table}.{ref_column}")
     
     return "\n".join(output)
+
+
+def get_mac_schema_column_samples(
+    dataset: "BaseDataset",
+    database_name: str,
+    schema: Dict[str, Any],
+    max_examples: int = 6
+) -> Dict[str, Dict[str, List[Any]]]:
+    """Get sample values for each column in the schema, following mac-schema logic.
+    
+    Args:
+        dataset: The dataset instance to use for querying
+        database_name: Name of the database to query
+        schema: Schema dictionary in the format of tables_columns_json.json
+        max_examples: Maximum number of examples to return per column
+        
+    Returns:
+        Dictionary mapping table names to column names to lists of sample values
+        {
+            "table1": {
+                "column1": ["value1", "value2", "value3"],
+                "column2": ["value4", "value5", "value6"]
+            },
+            ...
+        }
+    """
+    samples = {}
+    
+    for table_name, table_info in schema["tables"].items():
+        samples[table_name] = {}
+        
+        # Get primary and foreign keys for this table
+        primary_keys = table_info.get("keys", {}).get("primary_key", [])
+        foreign_keys = list(table_info.get("foreign_keys", {}).keys())
+        
+        # Process each column
+        for col_name, col_type in table_info["columns"].items():
+            # Skip if column is a key
+            if col_name in primary_keys or col_name in foreign_keys:
+                continue
+                
+            # Skip if column name ends with certain patterns
+            if col_name.lower().endswith(('id', 'email', 'url')):
+                continue
+                
+            # For numeric types, check if we should skip
+            if col_type.upper() in ['INTEGER', 'REAL', 'NUMERIC', 'FLOAT', 'INT']:
+                # Query to count distinct values
+                quoted_col = f'"{col_name}"'
+                count_query = f'SELECT COUNT(DISTINCT {quoted_col}) FROM "{table_name}"'
+                try:
+                    results = dataset.query_database(database_name, count_query)
+                    unique_count = results[0][0]
+                    if unique_count > 10:
+                        continue
+                except Exception:
+                    continue
+            
+            # Get distinct values
+            quoted_col = f'"{col_name}"'
+            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL LIMIT {max_examples}'
+            
+            try:
+                results = dataset.query_database(database_name, query)
+                col_samples = []
+                
+                for row in results:
+                    if col_name in row and row[col_name] is not None:
+                        value = str(row[col_name]).strip()
+                        if value:
+                            # For text columns, filter out URLs and emails
+                            if col_type.upper() in ['TEXT', 'VARCHAR']:
+                                if 'https://' in value or 'http://' in value:
+                                    continue
+                                if len(value) > 50:
+                                    continue
+                            col_samples.append(value)
+                
+                # For date columns, only take one example
+                if col_type.upper() in ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP']:
+                    col_samples = col_samples[:1]
+                
+                # Store the samples if we have any
+                if col_samples:
+                    samples[table_name][col_name] = col_samples
+                    
+            except Exception as e:
+                print(f"Warning: Could not get samples for column {col_name} in table {table_name}: {str(e)}")
+    
+    return samples
