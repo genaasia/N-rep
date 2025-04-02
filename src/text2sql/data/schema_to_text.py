@@ -343,3 +343,68 @@ def get_mac_schema_column_samples(
                 print(f"Warning: Could not get samples for column {col_name} in table {table_name}: {str(e)}")
     
     return samples
+
+
+def schema_to_mac_schema_format(
+    database_name: str,
+    schema: dict[str, Any],
+    column_samples: dict[str, dict[str, list[Any]]],
+    table_descriptions: Optional[dict] = None
+) -> str:
+    """represent schema in mac-schema format (following mac-schema.txt)
+    
+    Args:
+        database_name: Name of the database
+        schema: Schema dictionary in the format of tables_columns_json.json
+        column_samples: Dictionary of sample values from get_mac_schema_column_samples()
+        table_descriptions: Optional dictionary containing table and column descriptions
+    """
+    output = []
+    
+    # Process each table
+    for table_name, table_info in schema["tables"].items():
+        # Add table header
+        output.append(f"# Table: {table_name}")
+        output.append("[")
+        
+        # Process each column
+        column_lines = []
+        columns = list(table_info["columns"].items())
+        for i, (col_name, col_type) in enumerate(columns):
+            col_name = str(col_name)  # Convert to string in case it's an integer
+            
+            # Start building column line
+            col_line = f"  ({col_name},"
+            
+            # Add column description if available
+            if table_descriptions:
+                # Find the column in table_descriptions
+                col_desc = None
+                for col_idx, (tb_idx, orig_col_name) in enumerate(table_descriptions["column_names_original"]):
+                    if tb_idx == table_descriptions["table_names_original"].index(table_name) and orig_col_name == col_name:
+                        col_desc = table_descriptions["column_names"][col_idx][1]
+                        break
+                
+                if col_desc:
+                    col_line += f" {col_desc}."
+            
+            # Add examples if available
+            if table_name in column_samples and col_name in column_samples[table_name]:
+                samples = column_samples[table_name][col_name]
+                if samples:
+                    sample_str = str(samples)
+                    col_line += f" Value examples: {sample_str}."
+            
+            col_line += ")"
+            
+            # Add comma if this is not the last column
+            if i < len(columns) - 1:
+                col_line += ","
+                
+            column_lines.append(col_line)
+        
+        # Add all column lines
+        output.append("\n".join(column_lines))
+        output.append("]")
+    
+    return "\n".join(output)
