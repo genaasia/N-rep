@@ -191,3 +191,65 @@ def get_m_schema_column_samples(
                 samples[table_name][col_name] = []
     
     return samples
+
+
+def schema_to_m_schema_format(
+    database_name: str,
+    schema: dict[str, Any],
+    column_samples: dict[str, dict[str, list[Any]]]
+) -> str:
+    """represent schema in m-schema format (following m-schema.txt)
+    
+    Args:
+        database_name: Name of the database
+        schema: Schema dictionary in the format of tables_columns_json.json
+        column_samples: Dictionary of sample values from get_m_schema_column_samples()
+    """
+    output = []
+    
+    # Add DB_ID header
+    output.append(f"【DB_ID】 {database_name}")
+    output.append("【Schema】")
+    
+    # Process each table
+    for table_name, table_info in schema["tables"].items():
+        # Add table header
+        output.append(f"# Table: {table_name}")
+        output.append("[")
+        
+        # Process each column
+        column_lines = []
+        for col_name, col_type in table_info["columns"].items():
+            col_name = str(col_name)  # Convert to string in case it's an integer
+            col_line = f"({col_name}:{col_type.upper()}"
+            
+            # Add primary key if applicable
+            if "keys" in table_info and "primary_key" in table_info["keys"]:
+                if col_name in table_info["keys"]["primary_key"]:
+                    col_line += ", Primary Key"
+            
+            # Add examples if available
+            if table_name in column_samples and col_name in column_samples[table_name]:
+                samples = column_samples[table_name][col_name]
+                if samples:
+                    sample_str = ", ".join(str(s) for s in samples)
+                    col_line += f", Examples: [{sample_str}]"
+            
+            col_line += ")"
+            column_lines.append(col_line)
+        
+        # Add all column lines
+        output.append(",\n".join(column_lines))
+        output.append("]")
+    
+    # Add foreign keys section
+    output.append("【Foreign keys】")
+    for table_name, table_info in schema["tables"].items():
+        if "foreign_keys" in table_info:
+            for fk_column, fk_info in table_info["foreign_keys"].items():
+                fk_column = str(fk_column)  # Convert to string in case it's an integerSELECT name FROM sqlite_master WHERE type='table'
+                ref_table = fk_info["referenced_table"]
+                ref_column = fk_info["referenced_column"]
+                output.append(f"{table_name}.{fk_column}={ref_table}.{ref_column}")
+    
+    return "\n".join(output)
