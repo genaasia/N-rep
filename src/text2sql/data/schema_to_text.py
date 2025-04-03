@@ -121,17 +121,15 @@ def get_m_schema_column_samples(
     dataset: "BaseDataset",
     database_name: str,
     schema: Dict[str, Any],
-    sample_limit: int = 3,
-    max_distinct_samples: int = 3
+    max_examples: int = 3,
 ) -> Dict[str, Dict[str, List[Any]]]:
     """Get sample values for each column in the schema, following m-schema.
     
     Args:
         dataset: The dataset instance to use for querying
         database_name: Name of the database to query
-        schema: Schema dictionary in the format of tables_columns_json.json
-        sample_limit: Maximum number of samples to return per column (after filtering)
-        max_distinct_samples: Maximum number of distinct samples to fetch from database
+        schema: Schema dictionary 
+        max_examples: Maximum number of samples to return per column, default 3
         
     Returns:
         Dictionary mapping table names to column names to lists of sample values
@@ -154,7 +152,7 @@ def get_m_schema_column_samples(
             quoted_col = f'"{col_name}"'
             
             # Create a query to get distinct sample values for this column
-            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL LIMIT {max_distinct_samples}'
+            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL LIMIT {max_examples}'
             
             try:
                 # Execute the query and get results
@@ -180,7 +178,7 @@ def get_m_schema_column_samples(
                         elif max_len > 20:
                             col_samples = [col_samples[0]]
                         else:
-                            col_samples = col_samples[:sample_limit]
+                            col_samples = col_samples[:max_examples]
                 
                 # Store the samples for this column
                 samples[table_name][col_name] = col_samples
@@ -202,7 +200,7 @@ def schema_to_m_schema_format(
     
     Args:
         database_name: Name of the database
-        schema: Schema dictionary in the format of tables_columns_json.json
+        schema: Schema dictionary 
         column_samples: Dictionary of sample values from get_m_schema_column_samples()
     """
     output = []
@@ -259,15 +257,15 @@ def get_mac_schema_column_samples(
     dataset: "BaseDataset",
     database_name: str,
     schema: Dict[str, Any],
-    max_examples: int = 6
+    max_examples: int = 6,
 ) -> Dict[str, Dict[str, List[Any]]]:
     """Get sample values for each column in the schema, following mac-schema logic.
     
     Args:
         dataset: The dataset instance to use for querying
         database_name: Name of the database to query
-        schema: Schema dictionary in the format of tables_columns_json.json
-        max_examples: Maximum number of examples to return per column
+        schema: Schema dictionary 
+        max_examples: Maximum number of examples to return per column, default 6
         
     Returns:
         Dictionary mapping table names to column names to lists of sample values
@@ -355,7 +353,7 @@ def schema_to_mac_schema_format(
     
     Args:
         database_name: Name of the database
-        schema: Schema dictionary in the format of tables_columns_json.json
+        schema: Schema dictionary 
         column_samples: Dictionary of sample values from get_mac_schema_column_samples()
         table_descriptions: Optional dictionary containing table and column descriptions
     """
