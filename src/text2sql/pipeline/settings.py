@@ -24,12 +24,12 @@ class PipeConfig:
     generator: GeneratorConfig
     candidate_count: int
     pipe_name: str
+    fewshot_schema_key: str
     rewrite: bool = False
     repair: bool = False
     add_date: bool = True
     use_evidence: bool = False
     schema_key: str = ""
-    fewshot_schema_key: str = "gold_filtered_schema"  # Default value for backward compatibility
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -68,7 +68,7 @@ class PipeConfig:
             generator=generator,
             candidate_count=data["candidate_count"],
             pipe_name=data["pipe_name"],
-            fewshot_schema_key=data.get("fewshot_schema_key", "gold_filtered_schema"),
+            fewshot_schema_key=data["fewshot_schema_key"],
         )
 
 

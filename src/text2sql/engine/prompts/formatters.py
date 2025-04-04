@@ -378,7 +378,7 @@ class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
             database_type: str,
             few_shot_query_key: str = "nl_en_query",
             few_shot_target_key: str = "sql_query",
-            fewshot_schema_key: str = "gold_filtered_schema",
+            fewshot_schema_key: str | None = None,
         ):
         self.database_type = database_type
         self.few_shot_query_key = few_shot_query_key
@@ -407,6 +407,9 @@ class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
             # schema_description=schema_description
         )
         messages = [{"role": "system", "content": formatted_system_message}]
+
+        if few_shot_examples and self.fewshot_schema_key is None:
+            raise ValueError("fewshot_schema_key is not provided")
 
         for example in few_shot_examples:
             example_query = example["data"][self.few_shot_query_key]
