@@ -256,7 +256,7 @@ def main():
     logger.info("Loading test data...")
     # load test.json
     with open(args.test_json_path, "r") as f:
-        test_json = json.load(f)
+        test_data: list[dict] = json.load(f)
 
     # load column_meaning.json
     if args.column_meaning_json_path is None:
@@ -266,9 +266,64 @@ def main():
         column_meaning_json = {}
 
     # create generators
+    logger.info("Creating embedder...")
+    embedder = BedrockCohereEmbedder(
+        model=os.getenv("AWS_MODEL_NAME"),
+        region_name=os.getenv("AWS_REGION_NAME"),
+        input_type=os.getenv("AWS_INPUT_TYPE"),
+    )
+
+    logger.info("Creating & testing azure generator...")
+    test_messages = [{"role": "user", "content": "What is the capital of South Korea? Answer in one word."}]
+
+    azure_generator = AzureGenerator(
+        model=os.getenv("AZURE_OPENAI_MODEL"),
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_API_ENDPOINT"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    )
+    p = azure_generator.generate(test_messages, temperature=0.0)
+    logger.info(f"Azure generator test response: {p}")
+
+    logger.info("Creating & testing Gemini generator...")
+    gcp_generator = GCPGenerator(
+        model="gemini-1.5-flash",
+        api_key=os.getenv("GCP_KEY"),
+    )
+
+    p = gcp_generator.generate(test_messages, temperature=0.0)
+    logger.info(f"Gemini generator test response: {p}")
 
     # preprocessing
     dataset, schema_manager = prepare_dataset_information(args.test_database_path, args.test_tables_json_path)
     retriever = prepare_fewshot_retriever(args.embeddings_path, args.embeddings_data_path)
 
     logger.info("Preprocessing complete, starting inference...")
+
+    # example single inference
+    logger.warning("!!!!! Running single test !!!!!")
+
+    sample = test_data[0]
+    schema_format = "m_schema"
+    schema_filtering_mode = "column"
+
+    logger.info("[test] doing schema linking")
+    schema_linking_outputs = run_schema_linking(gcp_generator, schema_manager, sample, schema_format)
+    logger.info(
+        f"[test] schema linking output: type {type(schema_linking_outputs).__name__} with keys {schema_linking_outputs.keys()}"
+    )
+    logger.info("[test] doing schema linking")
+    few_shot_results = run_fewshot_retrieval(embedder=embedder, retriever=retriever, sample=sample, top_k=3)
+    logger.info(
+        f"[test] fewshot retrieval output: type {type(few_shot_results).__name__} with keys {few_shot_results[0].keys()}"
+    )
+    logger.info(f"[test] doing sql generation with gcp generator, '{schema_filtering_mode}' schema filtering")
+    sql = run_sql_generation(
+        generator=gcp_generator,
+        sample=sample,
+        few_shot_results=few_shot_results,
+        schema_linking_outputs=schema_linking_outputs,
+        schema_format=schema_format,
+        schema_filtering=schema_filtering_mode,
+    )
+    logger.info(f"[test] predicted sql: {sql}")
