@@ -327,3 +327,7 @@ def main():
         schema_filtering=schema_filtering_mode,
     )
     logger.info(f"[test] predicted sql: {sql}")
+
+
+if __name__ == "__main__":
+    main()
