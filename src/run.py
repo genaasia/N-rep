@@ -259,7 +259,7 @@ def main():
         test_data: list[dict] = json.load(f)
 
     # load column_meaning.json
-    if args.column_meaning_json_path is None:
+    if args.column_meaning_json_path is not None:
         with open(args.column_meaning_json_path, "r") as f:
             column_meaning_json = json.load(f)
     else:
