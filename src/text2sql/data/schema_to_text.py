@@ -1,4 +1,5 @@
-from typing import Any
+from typing import Any, Dict, List, Optional
+
 
 
 def schema_to_basic_format(
@@ -113,4 +114,295 @@ def schema_to_datagrip_format(database_name: str, schema: dict[str, Any]) -> str
 
         output.append("")  # Add an empty line between tables
 
+    return "\n".join(output)
+
+
+def get_m_schema_column_samples(
+    dataset: "BaseDataset",
+    database_name: str,
+    schema: Dict[str, Any],
+    max_examples: int = 3,
+) -> Dict[str, Dict[str, List[Any]]]:
+    """Get sample values for each column in the schema, following m-schema.
+    
+    Args:
+        dataset: The dataset instance to use for querying
+        database_name: Name of the database to query
+        schema: Schema dictionary 
+        max_examples: Maximum number of samples to return per column, default 3
+        
+    Returns:
+        Dictionary mapping table names to column names to lists of sample values
+        {
+            "table1": {
+                "column1": ["value1", "value2", "value3"],
+                "column2": ["value4", "value5", "value6"]
+            },
+            ...
+        }
+    """
+    samples = {}
+    
+    for table_name, table_info in schema["tables"].items():
+        samples[table_name] = {}
+        
+        # Process each column separately to get distinct values
+        for col_name, col_type in table_info["columns"].items():
+            # Quote column name to handle special characters and numbers
+            quoted_col = f'"{col_name}"'
+            
+            # Create a query to get distinct sample values for this column
+            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL LIMIT {max_examples}'
+            
+            try:
+                # Execute the query and get results
+                results = dataset.query_database(database_name, query)
+                
+                # Collect non-None values
+                col_samples = []
+                for row in results:
+                    if col_name in row and row[col_name] is not None:
+                        col_samples.append(str(row[col_name]))  # Convert to string early
+                
+                # Apply m-schema example selection rules
+                if col_samples:
+                    # For date/time types, only show first example
+                    col_type = table_info["columns"][col_name].upper()
+                    if any(t in col_type for t in ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP']):
+                        col_samples = [col_samples[0]]
+                    else:
+                        # Check for long examples
+                        max_len = max(len(s) for s in col_samples)
+                        if max_len > 50:
+                            col_samples = []
+                        elif max_len > 20:
+                            col_samples = [col_samples[0]]
+                        else:
+                            col_samples = col_samples[:max_examples]
+                
+                # Store the samples for this column
+                samples[table_name][col_name] = col_samples
+                
+            except Exception as e:
+                # If query fails, leave empty samples for this column
+                print(f"Warning: Could not get samples for column {col_name} in table {table_name}: {str(e)}")
+                samples[table_name][col_name] = []
+    
+    return samples
+
+
+def schema_to_m_schema_format(
+    database_name: str,
+    schema: dict[str, Any],
+    column_samples: dict[str, dict[str, list[Any]]]
+) -> str:
+    """represent schema in m-schema format (following m-schema.txt)
+    
+    Args:
+        database_name: Name of the database
+        schema: Schema dictionary 
+        column_samples: Dictionary of sample values from get_m_schema_column_samples()
+    """
+    output = []
+    
+    # Add DB_ID header
+    output.append(f"【DB_ID】 {database_name}")
+    output.append("【Schema】")
+    
+    # Process each table
+    for table_name, table_info in schema["tables"].items():
+        # Add table header
+        output.append(f"# Table: {table_name}")
+        output.append("[")
+        
+        # Process each column
+        column_lines = []
+        for col_name, col_type in table_info["columns"].items():
+            col_name = str(col_name)  # Convert to string in case it's an integer
+            col_line = f"({col_name}:{col_type.upper()}"
+            
+            # Add primary key if applicable
+            if "keys" in table_info and "primary_key" in table_info["keys"]:
+                if col_name in table_info["keys"]["primary_key"]:
+                    col_line += ", Primary Key"
+            
+            # Add examples if available
+            if table_name in column_samples and col_name in column_samples[table_name]:
+                samples = column_samples[table_name][col_name]
+                if samples:
+                    sample_str = ", ".join(str(s) for s in samples)
+                    col_line += f", Examples: [{sample_str}]"
+            
+            col_line += ")"
+            column_lines.append(col_line)
+        
+        # Add all column lines
+        output.append(",\n".join(column_lines))
+        output.append("]")
+    
+    # Add foreign keys section
+    output.append("【Foreign keys】")
+    for table_name, table_info in schema["tables"].items():
+        if "foreign_keys" in table_info:
+            for fk_column, fk_info in table_info["foreign_keys"].items():
+                fk_column = str(fk_column)  # Convert to string in case it's an integerSELECT name FROM sqlite_master WHERE type='table'
+                ref_table = fk_info["referenced_table"]
+                ref_column = fk_info["referenced_column"]
+                output.append(f"{table_name}.{fk_column}={ref_table}.{ref_column}")
+    
+    return "\n".join(output)
+
+
+def get_mac_schema_column_samples(
+    dataset: "BaseDataset",
+    database_name: str,
+    schema: Dict[str, Any],
+    max_examples: int = 6,
+) -> Dict[str, Dict[str, List[Any]]]:
+    """Get sample values for each column in the schema, following mac-schema logic.
+    
+    Args:
+        dataset: The dataset instance to use for querying
+        database_name: Name of the database to query
+        schema: Schema dictionary 
+        max_examples: Maximum number of examples to return per column, default 6
+        
+    Returns:
+        Dictionary mapping table names to column names to lists of sample values
+        {
+            "table1": {
+                "column1": ["value1", "value2", "value3"],
+                "column2": ["value4", "value5", "value6"]
+            },
+            ...
+        }
+    """
+    samples = {}
+    
+    for table_name, table_info in schema["tables"].items():
+        samples[table_name] = {}
+        
+        # Get primary and foreign keys for this table
+        primary_keys = table_info.get("keys", {}).get("primary_key", [])
+        foreign_keys = list(table_info.get("foreign_keys", {}).keys())
+        
+        # Process each column
+        for col_name, col_type in table_info["columns"].items():
+            # Skip if column is a key
+            if col_name in primary_keys or col_name in foreign_keys:
+                continue
+                
+            # Skip if column name ends with certain patterns
+            if col_name.lower().endswith(('id', 'email', 'url')):
+                continue
+                
+            # For numeric types, check if we should skip
+            if col_type.upper() in ['INTEGER', 'REAL', 'NUMERIC', 'FLOAT', 'INT']:
+                # Query to count distinct values
+                quoted_col = f'"{col_name}"'
+                count_query = f'SELECT COUNT(DISTINCT {quoted_col}) FROM "{table_name}"'
+                try:
+                    results = dataset.query_database(database_name, count_query)
+                    unique_count = results[0][0]
+                    if unique_count > 10:
+                        continue
+                except Exception:
+                    continue
+            
+            # Get distinct values
+            quoted_col = f'"{col_name}"'
+            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL LIMIT {max_examples}'
+            
+            try:
+                results = dataset.query_database(database_name, query)
+                col_samples = []
+                
+                for row in results:
+                    if col_name in row and row[col_name] is not None:
+                        value = str(row[col_name]).strip()
+                        if value:
+                            # For text columns, filter out URLs and emails
+                            if col_type.upper() in ['TEXT', 'VARCHAR']:
+                                if 'https://' in value or 'http://' in value:
+                                    continue
+                                if len(value) > 50:
+                                    continue
+                            col_samples.append(value)
+                
+                # For date columns, only take one example
+                if col_type.upper() in ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP']:
+                    col_samples = col_samples[:1]
+                
+                # Store the samples if we have any
+                if col_samples:
+                    samples[table_name][col_name] = col_samples
+                    
+            except Exception as e:
+                print(f"Warning: Could not get samples for column {col_name} in table {table_name}: {str(e)}")
+    
+    return samples
+
+
+def schema_to_mac_schema_format(
+    database_name: str,
+    schema: dict[str, Any],
+    column_samples: dict[str, dict[str, list[Any]]],
+    table_descriptions: Optional[dict] = None
+) -> str:
+    """represent schema in mac-schema format (following mac-schema.txt)
+    
+    Args:
+        database_name: Name of the database
+        schema: Schema dictionary 
+        column_samples: Dictionary of sample values from get_mac_schema_column_samples()
+        table_descriptions: Optional dictionary containing table and column descriptions
+    """
+    output = []
+    
+    # Process each table
+    for table_name, table_info in schema["tables"].items():
+        # Add table header
+        output.append(f"# Table: {table_name}")
+        output.append("[")
+        
+        # Process each column
+        column_lines = []
+        columns = list(table_info["columns"].items())
+        for i, (col_name, col_type) in enumerate(columns):
+            col_name = str(col_name)  # Convert to string in case it's an integer
+            
+            # Start building column line
+            col_line = f"  ({col_name},"
+            
+            # Add column description if available
+            if table_descriptions:
+                # Find the column in table_descriptions
+                col_desc = None
+                for col_idx, (tb_idx, orig_col_name) in enumerate(table_descriptions["column_names_original"]):
+                    if tb_idx == table_descriptions["table_names_original"].index(table_name) and orig_col_name == col_name:
+                        col_desc = table_descriptions["column_names"][col_idx][1]
+                        break
+                
+                if col_desc:
+                    col_line += f" {col_desc}."
+            
+            # Add examples if available
+            if table_name in column_samples and col_name in column_samples[table_name]:
+                samples = column_samples[table_name][col_name]
+                if samples:
+                    sample_str = str(samples)
+                    col_line += f" Value examples: {sample_str}."
+            
+            col_line += ")"
+            
+            # Add comma if this is not the last column
+            if i < len(columns) - 1:
+                col_line += ","
+                
+            column_lines.append(col_line)
+        
+        # Add all column lines
+        output.append("\n".join(column_lines))
+        output.append("]")
+    
     return "\n".join(output)

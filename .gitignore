@@ -217,3 +217,12 @@ notebooks_local
 **.tsv
 **.csv
 **.sql
+
+gena-agent/notebooks/sqlite-doc-3490100/*
+gena-agent/**/*.html
+gena-agent/**/*.json
+gena-agent/**/*.gif
+gena-agent/**/*.svg
+gena-agent/**/*.png
+gena-agent/**/*.jpg
+scripts/bird_inference_example/**/*.json

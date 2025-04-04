@@ -13,7 +13,15 @@ from sqlalchemy import create_engine, inspect, text
 from func_timeout import FunctionTimedOut, func_timeout
 
 from text2sql.data.sqlite_functions import  get_sqlite_database_file, query_sqlite_database, get_sqlite_schema, query_sqlite_database_from_connection
-from text2sql.data.schema_to_text import schema_to_basic_format, schema_to_sql_create, schema_to_datagrip_format
+from text2sql.data.schema_to_text import (
+    get_m_schema_column_samples,
+    get_mac_schema_column_samples,
+    schema_to_basic_format, 
+    schema_to_datagrip_format,
+    schema_to_mac_schema_format,
+    schema_to_m_schema_format,
+    schema_to_sql_create, 
+)
 from text2sql.data.mysql_functions import get_mysql_schema
 from text2sql.data.postgres_functions import get_postgresql_schema
 
@@ -29,12 +37,20 @@ def list_supported_databases(dataset_base_path: str) -> list[str]:
 
 
 class BaseDataset(ABC):
+    supported_modes = [
+        "basic", 
+        "basic_types", 
+        "basic_relations", 
+        "basic_types_relations", 
+        "datagrip", 
+        "sql", 
+        "m_schema", 
+        "mac_schema_basic",
+        "mac_schema",
+    ]
+
     @abstractmethod
     def get_databases(self) -> list[str]:
-        pass
-    
-    @abstractmethod
-    def get_schema_description_modes(self) -> list[str]:
         pass
     
     @abstractmethod
@@ -42,12 +58,50 @@ class BaseDataset(ABC):
         pass
     
     @abstractmethod
-    def describe_database_schema(self, database_name: str, mode: str="basic") -> str:
-        pass
-    
-    @abstractmethod
     def query_database(self, database_name: str, query: str) -> list[dict]:
         pass
+
+    def describe_database_schema(self, database_name: str, mode: str="basic", table_descriptions: dict | None = None, max_examples: int | None = None) -> str:
+        """return a string representation of the database schema"""
+        if database_name not in self.databases:
+            raise ValueError(f"Database '{database_name}' not in databases {self.databases}")
+        if mode not in self.supported_modes:
+            raise ValueError(f"Unknown schema mode '{mode}', supported modes are: {self.supported_modes}")
+        schema = self.get_database_schema(database_name)
+        if mode == "basic":
+            return schema_to_basic_format(database_name, schema, include_types=False, include_relations=False)
+        if mode == "basic_types":
+            return schema_to_basic_format(database_name, schema, include_types=True, include_relations=False)
+        if mode == "basic_relations":
+            return schema_to_basic_format(database_name, schema, include_types=False, include_relations=True)
+        if mode == "basic_types_relations":
+            return schema_to_basic_format(database_name, schema, include_types=True, include_relations=True)
+        elif mode == "sql":
+            return schema_to_sql_create(database_name, schema)
+        elif mode == "datagrip":
+            return schema_to_datagrip_format(database_name, schema)
+        elif mode == "m_schema":
+            column_parameters = {"database_name": database_name, "schema": schema}
+            if max_examples is not None:
+                column_parameters["max_examples"] = max_examples
+            column_samples = get_m_schema_column_samples(self, **column_parameters)
+            return schema_to_m_schema_format(database_name, schema, column_samples)
+        elif mode == "mac_schema_basic":
+            if table_descriptions is not None:
+                raise ValueError("table_descriptions should be None for mac_schema_basic mode")
+            column_parameters = {"database_name": database_name, "schema": schema}
+            if max_examples is not None:
+                column_parameters["max_examples"] = max_examples
+            column_samples = get_mac_schema_column_samples(self, **column_parameters)
+            return schema_to_mac_schema_format(database_name, schema, column_samples)
+        elif mode == "mac_schema":
+            if table_descriptions is None:
+                raise ValueError("table_descriptions dict is required for mac_schema mode")
+            column_parameters = {"database_name": database_name, "schema": schema}
+            if max_examples is not None:
+                column_parameters["max_examples"] = max_examples
+            column_samples = get_mac_schema_column_samples(self, **column_parameters)
+            return schema_to_mac_schema_format(database_name, schema, column_samples, table_descriptions)
 
     def validate_query(
         self, database_name: str, query: str, timeout_secs: int = 30
@@ -107,7 +161,6 @@ class MysqlDataset(BaseDataset):
         self.port = port
         self.user = user
         self.password = password
-        self.supported_modes = ["basic", "basic_types", "basic_relations", "basic_types_relations", "sql", "datagrip"]
         self.engine = self._get_engine()
         self.databases = self.get_databases()
 
@@ -134,28 +187,6 @@ class MysqlDataset(BaseDataset):
         if database_name not in self.databases:
             raise ValueError(f"Database '{database_name}' not in databases {self.databases}")
         return get_mysql_schema(self.engine, database_name)
-    
-    def describe_database_schema(self, database_name: str, mode: str="basic") -> str:
-        """return a string representation of the database schema"""
-        if database_name not in self.databases:
-            raise ValueError(f"Database '{database_name}' not in databases {self.databases}")
-        if mode not in self.supported_modes:
-            raise ValueError(f"Unknown schema mode '{mode}', supported modes are: {self.supported_modes}")
-        schema = self.get_database_schema(database_name)
-        if mode == "basic":
-            return schema_to_basic_format(database_name, schema, include_types=False, include_relations=False)
-        if mode == "basic_types":
-            return schema_to_basic_format(database_name, schema, include_types=True, include_relations=False)
-        if mode == "basic_relations":
-            return schema_to_basic_format(database_name, schema, include_types=False, include_relations=True)
-        if mode == "basic_types_relations":
-            return schema_to_basic_format(database_name, schema, include_types=True, include_relations=True)
-        elif mode == "sql":
-            return schema_to_sql_create(database_name, schema)
-        elif mode == "datagrip":
-            return schema_to_datagrip_format(database_name, schema)
-        else:
-            raise ValueError(f"Unknown schema mode '{mode}', supported modes are: {self.supported_modes}")
         
     def query_database(self, database_name: str, query: str) -> list[dict]:
         """return the results of the query as a list of dictionaries"""
@@ -174,7 +205,6 @@ class PostgresDataset(BaseDataset):
         self.port = port
         self.user = user
         self.password = password
-        self.supported_modes = ["basic", "basic_types", "basic_relations", "basic_types_relations", "sql", "datagrip"]
         self.engines = dict()  # db name, engine
         self.databases = sorted(list(self.engines.keys()))
 
@@ -203,26 +233,6 @@ class PostgresDataset(BaseDataset):
         """return a dict of the database schema"""
         engine = self._get_engine(database_name)
         return get_postgresql_schema(engine, database_name)
-    
-    def describe_database_schema(self, database_name: str, mode: str="basic") -> str:
-        """return a string representation of the database schema"""
-        if mode not in self.supported_modes:
-            raise ValueError(f"Unknown schema mode '{mode}', supported modes are: {self.supported_modes}")
-        schema = self.get_database_schema(database_name)
-        if mode == "basic":
-            return schema_to_basic_format(database_name, schema, include_types=False, include_relations=False)
-        if mode == "basic_types":
-            return schema_to_basic_format(database_name, schema, include_types=True, include_relations=False)
-        if mode == "basic_relations":
-            return schema_to_basic_format(database_name, schema, include_types=False, include_relations=True)
-        if mode == "basic_types_relations":
-            return schema_to_basic_format(database_name, schema, include_types=True, include_relations=True)
-        elif mode == "sql":
-            return schema_to_sql_create(database_name, schema)
-        elif mode == "datagrip":
-            return schema_to_datagrip_format(database_name, schema)
-        else:
-            raise ValueError(f"Unknown schema mode '{mode}', supported modes are: {self.supported_modes}")
         
     def query_database(self, database_name: str, query: str) -> list[dict]:
         """return the results of the query as a list of dictionaries"""
@@ -230,26 +240,6 @@ class PostgresDataset(BaseDataset):
         with engine.connect() as connection:
             result = connection.execute(text(query))
         return [dict(r._mapping) for r in result]
-    
-
-
-# class DBConnectionManager:
-#     def __init__(self):
-#         self.connections = {}
-#         atexit.register(self.close_all)
-    
-#     def get_connection(self, db_path):
-#         if db_path not in self.connections:
-#             conn = sqlite3.connect(f'file:{db_path}?mode=ro')
-#             conn.execute('PRAGMA cache_size = -2000000')  # Set 2GB cache
-#             conn.row_factory = sqlite3.Row
-#             self.connections[db_path] = conn
-#         return self.connections[db_path]
-    
-#     def close_all(self):
-#         for conn in self.connections.values():
-#             conn.close()
-#         self.connections.clear()
 
 
 class SqliteDataset(BaseDataset):
@@ -265,8 +255,6 @@ class SqliteDataset(BaseDataset):
         """
         self.base_data_path = base_data_path
         self.databases = list_supported_databases(base_data_path)
-        # self.manager = DBConnectionManager()
-        self.supported_modes = ["basic", "basic_types", "basic_relations", "basic_types_relations", "sql", "datagrip"]
 
     def get_databases(self) -> list[str]:
         """return a list of the names of the sqlite databases in the dataset"""
@@ -285,27 +273,6 @@ class SqliteDataset(BaseDataset):
     def get_database_schema(self, database_name: str) -> dict:
         """return a dict of the database schema"""
         return get_sqlite_schema(self.base_data_path, database_name)
-    
-    def describe_database_schema(self, database_name: str, mode: str="basic") -> str:
-        """return a string representation of the database schema"""
-        
-        if mode not in self.supported_modes:
-            raise ValueError(f"Unknown schema mode '{mode}', supported modes are: {self.supported_modes}")
-        schema = self.get_database_schema(database_name)
-        if mode == "basic":
-            return schema_to_basic_format(database_name, schema, include_types=False, include_relations=False)
-        if mode == "basic_types":
-            return schema_to_basic_format(database_name, schema, include_types=True, include_relations=False)
-        if mode == "basic_relations":
-            return schema_to_basic_format(database_name, schema, include_types=False, include_relations=True)
-        if mode == "basic_types_relations":
-            return schema_to_basic_format(database_name, schema, include_types=True, include_relations=True)
-        elif mode == "sql":
-            return schema_to_sql_create(database_name, schema)
-        elif mode == "datagrip":
-            return schema_to_datagrip_format(database_name, schema)
-        else:
-            raise ValueError(f"Unknown schema mode '{mode}', supported modes are: {self.supported_modes}")
         
     def query_database(self, database_name: str, query: str) -> list[dict]:
         """return the results of the query as a list of dictionaries"""

@@ -5,7 +5,6 @@ from typing import Callable
 
 import tqdm
 
-from together import Together
 from openai import AzureOpenAI, OpenAI
 import google.generativeai as genai
 from tenacity import retry, wait_random_exponential, stop_after_attempt
@@ -43,12 +42,9 @@ class AzureGenerator:
         self.api_version = api_version
         self.azure_endpoint = azure_endpoint
         self.model = model
-        self.post_func = post_func  
+        self.post_func = post_func
         self.client: AzureOpenAI = get_azure_client(
-            api_key=self.api_key,
-            api_version=self.api_version,
-            azure_endpoint=self.azure_endpoint,
-            **kwargs
+            api_key=self.api_key, api_version=self.api_version, azure_endpoint=self.azure_endpoint, **kwargs
         )
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
@@ -56,7 +52,6 @@ class AzureGenerator:
         """embed one batch of texts with azure"""
         chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
         return self.post_func(chat_completion.choices[0].message.content)
-
 
 
 class BedrockGenerator:
@@ -76,7 +71,7 @@ class BedrockGenerator:
         """
         self.region_name = region_name
         self.model = model
-        self.post_func = post_func  
+        self.post_func = post_func
         self.client = get_bedrock_client(region_name=self.region_name, **kwargs)
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
@@ -97,7 +92,7 @@ class BedrockGenerator:
             )
         return self.post_func(response["output"]["message"]["content"][-1]["text"])
 
-    
+
 class GCPGenerator:
 
     def __init__(
@@ -115,7 +110,7 @@ class GCPGenerator:
 
         """
         self.model = model
-        self.post_func = post_func  
+        self.post_func = post_func
 
         genai.configure(api_key=api_key)
 
@@ -131,7 +126,7 @@ class GCPGenerator:
             if message["role"] in ["assistant", "user"]:
                 if "content" not in message:
                     print(f"{message=}")
-                new_message = {"role" : message["role"], "parts": message["content"]}
+                new_message = {"role": message["role"], "parts": message["content"]}
                 history.append(new_message)
 
         chat = client.start_chat(history=history)
@@ -161,12 +156,8 @@ class OpenAIGenerator:
 
         """
         self.model = model
-        self.post_func = post_func  
-        self.client: OpenAI = get_openai_client(
-            api_key=api_key,
-            base_url=base_url,
-            **kwargs
-        )
+        self.post_func = post_func
+        self.client: OpenAI = get_openai_client(api_key=api_key, base_url=base_url, **kwargs)
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
@@ -193,11 +184,8 @@ class TogetherAIGenerator:
 
         """
         self.model = model
-        self.post_func = post_func  
-        self.client: Together = get_togetherai_client(
-            api_key=api_key,
-            **kwargs
-        )
+        self.post_func = post_func
+        self.client = get_togetherai_client(api_key=api_key, **kwargs)
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
