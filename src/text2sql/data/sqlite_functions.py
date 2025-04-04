@@ -97,3 +97,16 @@ def get_sqlite_schema(base_dir: str, database: str) -> dict[str, Any]:
     cursor.close()
     connection.close()
     return schema
+
+
+def analyze_database(base_dir: str, database: str):
+    """query sqlite database and return status and results"""
+    db_path = get_sqlite_database_file(base_dir=base_dir, database=database)
+    connection = sqlite3.connect(db_path)
+    cursor = connection.cursor()
+
+    cursor.execute("PRAGMA analysis_limit=10000;")
+    cursor.execute("ANALYZE;")
+    # This fixes the hanging queries, the fix comes from the main author of sqlite Richard Hipp himself
+    # Only needed for some versions of sqlite somehow, I don't understand it much
+    # https://sqlite.org/forum/info/aac5dfa3fc3fb68fdf3c291d15545b51bbea98939e814b1575aad884ef500e09 more here

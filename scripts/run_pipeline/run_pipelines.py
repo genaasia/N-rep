@@ -20,10 +20,11 @@ import tqdm
 from dotenv import load_dotenv
 from loguru import logger
 from text2sql.data import PostgresDataset, MysqlDataset, SqliteDataset, BaseDataset
+from text2sql.data.sqlite_functions import analyze_database
 from text2sql.engine.retrieval import WeaviateRetriever
 from text2sql.engine.embeddings import BedrockCohereEmbedder
 from text2sql.evaluation.plotter import plot_accuracy
-from text2sql.engine.prompts import GenaRepairPromptFormatter, GenaRewritePromptFormatter
+from text2sql.engine.prompts import GenaRepairPromptFormatter, RewritePromptFormatter
 from text2sql.engine.generation import identity
 from text2sql.pipeline.settings import PipeConfig
 
@@ -66,7 +67,7 @@ def run_inference(eval_data, pipe_configuration: PipeConfig, settings: Settings,
 
     # CREATE REPAIR AND REWRITE PROMPT FORMATTER
     repair_formatter = GenaRepairPromptFormatter(database_type=database_type) if pipe_configuration.repair else None
-    rewrite_formatter = GenaRewritePromptFormatter(database_type=database_type) if pipe_configuration.rewrite else None
+    rewrite_formatter = RewritePromptFormatter(database_type=database_type) if pipe_configuration.rewrite else None
 
     # GET POST FUNCTION
     post_func = get_postfunc(pipe_configuration.postfunc)
@@ -116,6 +117,7 @@ def run_inference(eval_data, pipe_configuration: PipeConfig, settings: Settings,
         rewrite_formatter,
         settings.db_name_key,
         pipe_configuration.use_evidence,
+        schema_key=pipe_configuration.schema_key,
     )
 
     # RUN PIPELINE OVER DATASET
@@ -132,13 +134,15 @@ def get_experiment_format(test_results):
     experiment_results = []
     for test_result in test_results:
         experiment_result = copy.deepcopy(test_result)
-        del experiment_result["api_execution_result"]
-        del experiment_result["predictions"]
-        del experiment_result["messages"]
-        del experiment_result["llm_output"]
+        # Only delete keys if they exist
+        # This logic should be other way around, only list the fields we want to keep
+        for key in ["api_execution_result", "predictions", "messages", "llm_output"]:
+            if key in experiment_result:
+                del experiment_result[key]
         flat_keys = ["predicted_sql", "sql_match_score", "execution_match_score", "intent_score", "soft_f1_score"]
         for key in flat_keys:
-            experiment_result[key]=experiment_result["highest_voted_valid"][key]
+            if key in experiment_result["highest_voted_valid"]:
+                experiment_result[key]=experiment_result["highest_voted_valid"][key]
         del experiment_result["highest_voted_valid"]
         experiment_results.append(experiment_result)
     return experiment_results
@@ -205,6 +209,9 @@ def main():
     )
     parser.add_argument(
         "--update-embeddings", "-u", default=True, action=argparse.BooleanOptionalAction
+    )
+    parser.add_argument(
+        "--analyze-dbs", "-a", default=False, action=argparse.BooleanOptionalAction
     )
     parser.add_argument(
         "--inference-file",
@@ -314,8 +321,18 @@ def main():
         test_data = reader(settings.test_file_path).to_dict(
                     orient="records"
         )
+
+        if args.analyze_dbs:
+            # analyze dbs to fix hanging queries
+            db_names = {row[settings.db_name_key] for row in test_data}
+            for db_name in db_names:
+                print(f"Analyzing {db_name}")
+                analyze_database(os.environ.get("SQLITE_DB_PATH"), db_name)
+
         if settings.batch_size:
             test_data = test_data[:settings.batch_size]
+        
+        has_new_data = False 
         for idx in tqdm.trange(len(test_data)):
             if not "api_execution_result" in test_data[idx]:
                 if settings.benchmark:
@@ -329,12 +346,14 @@ def main():
                 )
                 if result["validated"]:
                     test_data[idx]["api_execution_result"] = result["execution_result"]
+                    has_new_data = True
                 else:
                     logger.error(
                         "api_execution_result is empty and the golden query is not valid!\nSomething seems wrong with your data"
                     )
-        with open(str(settings.test_file_path).replace(".json", ".withdata.json"), "w") as f:
-            json.dump(test_data, f, indent=2)
+        if has_new_data:
+            with open(str(settings.test_file_path).replace(".json", "_withdata.json"), "w") as f:
+                json.dump(test_data, f, indent=2)
         if args.subset:
             test_data = random.sample(test_data, int(args.subset))
         for pipe_configuration in settings.pipe_configurations:
@@ -370,7 +389,7 @@ def main():
             if args.run_eval:
                 file_name = f"{pipe_configuration.pipe_name}_{formatted_date}"
 
-                eval_results = run_eval(test_results, test_results, score_cache, settings.target_sql_key)
+                eval_results = run_eval(test_results, test_results, score_cache, settings.target_sql_key, metrics=settings.metrics)
 
                 save_results(test_results, eval_results, file_name, settings)
 
@@ -394,7 +413,7 @@ def main():
         if args.run_eval:
             file_name = f"{inference_file_name}_{formatted_date}"
 
-            eval_results = run_eval(test_results, test_results, score_cache, settings.target_sql_key)
+            eval_results = run_eval(test_results, test_results, score_cache, settings.target_sql_key, metrics=settings.metrics)
 
             save_results(test_results, eval_results, file_name, settings)
 

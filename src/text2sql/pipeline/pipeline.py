@@ -5,9 +5,28 @@ from time import time
 
 from loguru import logger
 from text2sql.utils.postprocess import extract_sql_query, normalize_sql, get_table_names_from_query
+from text2sql.engine.generation.postprocessing import extract_first_code_block
 from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.prompts import BasePromptFormatter
 from text2sql.pipeline.settings import GeneratorConfig
+
+
+def check_need_rewrite(result):
+    if len(result) == 0:
+        return True
+    else:
+        has_non_none = False
+        for result_row in result:
+            for value in result_row.values():
+                if value is not None and value != "" and value != [] and value != 0 and value != 0.0:
+                    has_non_none = True
+                    break
+            if has_non_none:
+                break
+        if not has_non_none:
+            return True
+    return False
+
 
 def generate_and_measure(generate_func, messages, generator_config):
     start = time()
@@ -40,9 +59,11 @@ def single_sample_pipe(
         sample_query = test_sample[question_key]
 
         # Create chat messages
-        search_results = []
+        search_results, distances = [], []
         if embedder and retriever and top_k:
-            search_results = retriever.query(embedder.embed(sample_query), top_k=top_k)
+            embedder_query = test_sample["spacy_masked"]
+            search_results = retriever.query(embedder.embed(embedder_query), top_k=top_k)
+            distances = [sr["distance"] for sr in search_results]
 
         generate_message_params = {
                 "schema_description":schema_description,
@@ -90,6 +111,7 @@ def single_sample_pipe(
         output["predictions"] = predictions_not_grouped
         output["messages"] = messages
         output["llm_output"] = prediction_all
+        output["distances"] = distances
         return output
 
     except Exception as e:
@@ -185,6 +207,7 @@ class ConsistencyPipeline(Pipeline):
         rewrite_formatter: BasePromptFormatter | None = None,
         db_name_key: str | None = None,
         evidence: bool = False,
+        schema_key: str | None = None,
     ):
         self.formatter = formatter
         self.generator = generator
@@ -206,6 +229,7 @@ class ConsistencyPipeline(Pipeline):
         self.post_func = post_func
 
         self.evidence = evidence
+        self.schema_key = schema_key
 
     def _get_filtered_schema_description(self, prediction):
         table_names = get_table_names_from_query(prediction)
@@ -236,17 +260,34 @@ class ConsistencyPipeline(Pipeline):
                 "inference_time_secs": inference_time,
             }
             if results.get("validated"):
-                if self.rewrite_formatter:
+                if self.rewrite_formatter and check_need_rewrite(results.get("execution_result")):
                     repaired_prediction, rewrite_inference_time = self.run_rewrite(
                         test_sample, prediction, filtered_schema_description
                     )
-                    repaired_results = self.db_instance.validate_query(db_name, prediction)
+                    try:
+                        repaired_prediction = extract_sql_query(extract_first_code_block(repaired_prediction))
+                        repaired_results = self.db_instance.validate_query(db_name, repaired_prediction)
+                    except Exception as e:
+                        repaired_prediction = prediction
+                        repaired_results = results
                     if repaired_results.get("validated"):
                         results = repaired_results
+                    counter = 0
+                    while repaired_results.get("validated") and check_need_rewrite(repaired_results.get("execution_result")) and counter < 2:
+                        repaired_prediction, rewrite_inference_time = self.run_rewrite(
+                            test_sample, repaired_prediction, filtered_schema_description
+                        )
+                        try:
+                            repaired_prediction = extract_sql_query(extract_first_code_block(repaired_prediction))
+                            repaired_results = self.db_instance.validate_query(db_name, repaired_prediction)
+                        except Exception as e:
+                            print(e)
+                        results = repaired_results
+                        counter += 1
+                    obj.update({"rewrite_inference_time_secs": rewrite_inference_time, "rewritten": True, "rewritten_sql": repaired_prediction})  
                 results = self.db_instance.normalize_db_query_results(results)
                 obj.update({"valid": True, "results": results["execution_result"]})
-                if self.rewrite_formatter and repaired_results.get("validated"):
-                    obj.update({"rewrite_inference_time_secs": rewrite_inference_time, "rewritten": True})
+                
             else:
                 if self.repair_formatter:
                     error_message = results.get("message")
@@ -331,6 +372,9 @@ class ConsistencyPipeline(Pipeline):
         else:
             db_name = self.db_name
             schema_description = self.schema_description
+        
+        if self.schema_key:
+            schema_description = test_sample[self.schema_key]
 
         inference_result = single_sample_pipe(
             test_sample,

@@ -21,6 +21,12 @@ processing:
   batch_size: null
   max_workers: 4
 
+evaluation:
+  metrics:
+    - sql_match
+    - execution_match
+    - intent
+    - soft_f1
 
 pipe_configurations:
   - formatter: GENACoT

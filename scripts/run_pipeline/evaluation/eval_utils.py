@@ -45,15 +45,14 @@ def prune_schema(schema_description, candidates):
     return new_schema
 
 
-def upper_bound_eval(predictions, target_sql, target_execution, score_cache):
+def upper_bound_eval(predictions, target_sql, target_execution, score_cache, metrics=None):
+    if metrics is None:
+        metrics = ["execution_match"]
+        
     has_valid = False
     predicted_valids = [item for item in predictions if item["valid"]]
-    score_metrics = {
-        "sql_match": [],
-        "execution_match": [],
-        "intent": [],
-        "soft_f1": [],
-    }
+    score_metrics = {metric: [] for metric in metrics}
+    
     # Mapping of score types to their evaluation functions
     score_functions = {
         "sql_match": {
@@ -73,47 +72,41 @@ def upper_bound_eval(predictions, target_sql, target_execution, score_cache):
             "stop_condition": lambda score_list: 1.0 in score_list,
         },
     }
+    
     for values in predicted_valids:
         predicted_sql = values["sql"]
         if not values["valid"]:
             continue
         has_valid = True
         predicted_execution = values["results"]
-        for score_name, vals in score_functions.items():
-            eval_func, stop_condition = vals["eval_func"], vals["stop_condition"]
+        for score_name in metrics:
+            if score_name not in score_functions:
+                continue
+            eval_func, stop_condition = score_functions[score_name]["eval_func"], score_functions[score_name]["stop_condition"]
             if not stop_condition(score_metrics[score_name]):
                 score_metrics[score_name].append(
                     run_eval_with_cache(
                         predicted_sql,
                         target_sql,
-                        (
-                            predicted_execution
-                            if score_name != "sql_match"
-                            else predicted_sql
-                        ),
+                        predicted_execution if score_name != "sql_match" else predicted_sql,
                         target_execution if score_name != "sql_match" else target_sql,
                         eval_func,
                         score_cache,
                     )
                 )
-    return (
-        any(score_metrics["sql_match"]),
-        any(score_metrics["execution_match"]),
-        any(score_metrics["intent"]),
-        max(score_metrics["soft_f1"]) if score_metrics["soft_f1"] else 0.0,
-        has_valid,
-    )
+    
+    return tuple([any(score_metrics[metric]) for metric in metrics] + [has_valid])
 
 
-def lower_bound_eval(predictions, target_sql, target_execution, score_cache):
+def lower_bound_eval(predictions, target_sql, target_execution, score_cache, metrics=None):
+    if metrics is None:
+        metrics = ["execution_match"]
+        
     if not all([item["valid"] for item in predictions]):
-        return False, False, False, 0.0, False
-    score_metrics = {
-        "sql_match": [],
-        "execution_match": [],
-        "intent": [],
-        "soft_f1": [],
-    }
+        return tuple([False] * len(metrics) + [False])
+        
+    score_metrics = {metric: [] for metric in metrics}
+    
     # Mapping of score types to their evaluation functions
     score_functions = {
         "sql_match": {
@@ -133,39 +126,33 @@ def lower_bound_eval(predictions, target_sql, target_execution, score_cache):
             "calculate_condition": lambda score_list: not 0.0 in score_list,
         },
     }
+    
     for values in predictions:
         predicted_execution = values["results"]
         predicted_sql = values["sql"]
-        for score_name, vals in score_functions.items():
-            eval_func, calculate_condition = (
-                vals["eval_func"],
-                vals["calculate_condition"],
-            )
+        for score_name in metrics:
+            if score_name not in score_functions:
+                continue
+            eval_func, calculate_condition = score_functions[score_name]["eval_func"], score_functions[score_name]["calculate_condition"]
             if calculate_condition(score_metrics[score_name]):
                 score_metrics[score_name].append(
                     run_eval_with_cache(
                         predicted_sql,
                         target_sql,
-                        (
-                            predicted_execution
-                            if score_name != "sql_match"
-                            else predicted_sql
-                        ),
+                        predicted_execution if score_name != "sql_match" else predicted_sql,
                         target_execution if score_name != "sql_match" else target_sql,
                         eval_func,
                         score_cache,
                     )
                 )
-    return (
-        all(score_metrics["sql_match"]),
-        all(score_metrics["execution_match"]),
-        all(score_metrics["intent"]),
-        min(score_metrics["soft_f1"]) if score_metrics["soft_f1"] else 0.0,
-        True,
-    )
+    
+    return tuple([all(score_metrics[metric]) for metric in metrics] + [True])
 
 
-def highest_voted_eval(predictions, target_sql, target_execution, score_cache):
+def highest_voted_eval(predictions, target_sql, target_execution, score_cache, metrics=None):
+    if metrics is None:
+        metrics = ["execution_match"]
+        
     prediction_votes = {}
     for values in predictions:
         prediction = values["sql"]
@@ -177,65 +164,80 @@ def highest_voted_eval(predictions, target_sql, target_execution, score_cache):
         prediction_votes.items(), key=lambda x: x[1]["vote_count"]
     )
     if not values["valid"]:
-        return False, False, False, 0.0, False
+        return tuple([False] * len(metrics) + [False])
 
     predicted_execution = values["results"]
 
-    eval_functions = [
-        sql_match,
-        execution_match,
-        intent_match,
-        soft_f1,
-    ]
+    score_functions = {
+        "sql_match": sql_match,
+        "execution_match": execution_match,
+        "intent": intent_match,
+        "soft_f1": soft_f1,
+    }
+    
     scores = []
-    for eval_func in eval_functions:
+    for metric in metrics:
+        if metric not in score_functions:
+            continue
+        eval_func = score_functions[metric]
         scores.append(
             run_eval_with_cache(
                 predicted_sql,
                 target_sql,
-                predicted_execution if eval_func != sql_match else predicted_sql,
-                target_execution if eval_func != sql_match else target_sql,
+                predicted_execution if metric != "sql_match" else predicted_sql,
+                target_execution if metric != "sql_match" else target_sql,
                 eval_func,
                 score_cache,
             )
         )
-    return *scores, True
+    return tuple(scores + [True])
 
 
-def highest_voted_valid_eval(predictions, target_sql, target_execution, score_cache):
+def highest_voted_valid_eval(predictions, target_sql, target_execution, score_cache, metrics=None):
+    if metrics is None:
+        metrics = ["execution_match"]
+        
     prediced_valids = [item for item in predictions if item["valid"]]
     if not prediced_valids:
-        return False, False, False, 0.0, False, None, None
+        return tuple([False] * len(metrics) + [False, None, None])
 
     prediction_votes = {}
     for values in prediced_valids:
         prediction = values["sql"]
-        if prediction not in prediction_votes:
+        found_match = False
+        for compared_prediction, compared_values in prediction_votes.items():
+            if execution_match(compared_values["results"], values["results"]):
+                found_match = True
+                prediction_votes[compared_prediction]["vote_count"] += 1
+                break
+        if not found_match:
             prediction_votes[prediction] = {"vote_count": 0, **values}
-        prediction_votes[prediction]["vote_count"] += 1
 
     predicted_sql, values = max(
         prediction_votes.items(), key=lambda x: x[1]["vote_count"]
     )
     predicted_execution = values["results"]
 
-    get_intent_normalized = lambda x, y: intent_match(x, y, normalize_dates=True)
-    eval_functions = [
-        sql_match,
-        execution_match,
-        get_intent_normalized,
-        soft_f1,
-    ]
+    score_functions = {
+        "sql_match": sql_match,
+        "execution_match": execution_match,
+        "intent": intent_match,
+        "soft_f1": soft_f1,
+    }
+    
     scores = []
-    for eval_func in eval_functions:
+    for metric in metrics:
+        if metric not in score_functions:
+            continue
+        eval_func = score_functions[metric]
         scores.append(
             run_eval_with_cache(
                 predicted_sql,
                 target_sql,
-                predicted_execution if eval_func != sql_match else predicted_sql,
-                target_execution if eval_func != sql_match else target_sql,
+                predicted_execution if metric != "sql_match" else predicted_sql,
+                target_execution if metric != "sql_match" else target_sql,
                 eval_func,
                 score_cache,
             )
         )
-    return *scores, True, predicted_sql, predicted_execution
+    return tuple(scores + [True, predicted_sql, predicted_execution])

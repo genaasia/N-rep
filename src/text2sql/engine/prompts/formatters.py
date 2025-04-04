@@ -28,9 +28,12 @@ from text2sql.engine.prompts.constants_v3 import (
      GENA_USER_EXAMPLE_TEMPLATE,
      GENA_USER_QUERY_TEMPLATE,
      GENA_USER_QUERY_NO_DATE_TEMPLATE,
-     GENA_USER_QUERY_EVIDENCE_TEMPLATE,
+     GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE,
      GENA_COT_W_EVIDENCE_PROMPT_TEMPLATE,
-     GENA_ASSISTANT_TEMPLATE
+     GENA_ASSISTANT_TEMPLATE,
+     REWRITE_PROMPT_TEMPLATE,
+     REWRITE_USER_MESSAGE_TEMPLATE,
+     GENA_USER_QUERY_SCHEMA_TEMPLATE
 )
 
 
@@ -399,23 +402,58 @@ class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
         formatted_system_message = GENA_COT_W_EVIDENCE_PROMPT_TEMPLATE.format(
             sql_dialect=self.database_type,
             dialect_guidelines=dialect_guidelines,
-            schema_description=schema_description
+            # schema_description=schema_description
         )
         messages = [{"role": "system", "content": formatted_system_message}]
 
         for example in few_shot_examples:
             example_query = example["data"][self.few_shot_query_key]
             example_sql = example["data"][self.few_shot_target_key]
-            example_evidence = example["data"]["evidence"]
-            messages.append({"role": "user", "content": GENA_USER_QUERY_EVIDENCE_TEMPLATE.format(user_question=example_query, evidence=example_evidence, sql_dialect=self.database_type)})
+            exmaple_desc = example["data"]["gold_filtered_schema"]
+            if "evidence" in example["data"]:
+                exmaple_evidence = example["data"]["evidence"]
+                messages.append({"role": "user", "content": GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(schema_description=exmaple_desc, user_question=example_query, evidence=exmaple_evidence, sql_dialect=self.database_type)})
+            else:
+                messages.append({"role": "user", "content": GENA_USER_QUERY_SCHEMA_TEMPLATE.format(schema_description=exmaple_desc, user_question=example_query, sql_dialect=self.database_type)})
             messages.append({"role": "assistant", "content": GENA_ASSISTANT_TEMPLATE.format(sql_query=example_sql)})
 
-        query_message = GENA_USER_QUERY_EVIDENCE_TEMPLATE.format(
+        query_message = GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(
+            schema_description=schema_description,
             user_question=query, 
             evidence=evidence, 
             sql_dialect=self.database_type
         )
 
+        messages.append({"role": "user", "content": query_message})
+        return messages
+
+
+class RewritePromptFormatter(BasePromptFormatter):
+    """format messages for rewrite with custom prompt template."""
+    def __init__(
+            self,
+            database_type: str,
+        ):
+        self.database_type = database_type
+
+    def generate_messages(
+            self, 
+            schema_description: str, 
+            query: str, 
+            predicted_sql: str,
+        ) -> list[dict]:
+
+        formatted_system_message = REWRITE_PROMPT_TEMPLATE.format(
+            sql_dialect=self.database_type
+        )
+        messages = [{"role": "system", "content": formatted_system_message}]
+
+        query_message = REWRITE_USER_MESSAGE_TEMPLATE.format(
+             schema_description=schema_description,
+            #  relevant_tables=table_text,
+             user_question=query,
+             original_sql=predicted_sql      
+        )
         messages.append({"role": "user", "content": query_message})
         return messages
 
