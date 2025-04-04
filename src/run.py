@@ -2,6 +2,8 @@ import argparse
 import json
 import os
 
+from typing import Literal
+
 import numpy as np
 import tqdm
 
@@ -15,7 +17,7 @@ from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder
 from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator
 from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.retrieval import LocalRetriever
-from text2sql.utils import parse_json_from_prediction
+from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens
 
 
 def prepare_dataset_information(
@@ -110,9 +112,29 @@ def run_schema_linking(
     return outputs
 
 
-def run_fewshot_retrieval():
-    """run the fewshow retrieval task"""
-    return
+def run_fewshot_retrieval(
+    embedder: BaseEmbedder,
+    retriever: LocalRetriever,
+    sample: dict,
+    top_k: int = 3,
+    do_mask: bool = True,
+) -> list[dict]:
+    """run the fewshow retrieval task
+
+    Args:
+        embedder: embedder
+        retriever: retriever pre-loaded with vectors and data
+        sample: one sample from the test set json
+        top_k: number of top k results to return
+    Returns:replace_entities_with_tokens
+        results: list of dict with the top k results (with keys id, distance, data)
+    """
+    question = sample["question"]
+    if do_mask:
+        question = replace_entities_with_tokens(question)
+    embedding = embedder.embed(question)
+    results = retriever.query(embedding, top_k=top_k)
+    return results
 
 
 def run_sql_generation():
