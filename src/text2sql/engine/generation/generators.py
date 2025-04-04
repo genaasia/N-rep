@@ -17,7 +17,13 @@ def identity(x: str) -> str:
     return x
 
 
-class AzureGenerator:
+class BaseGenerator(ABC):
+    @abstractmethod
+    def generate(self, messages: list[dict], **kwargs) -> str:
+        pass
+
+
+class AzureGenerator(BaseGenerator):
 
     def __init__(
         self,
@@ -54,7 +60,7 @@ class AzureGenerator:
         return self.post_func(chat_completion.choices[0].message.content)
 
 
-class BedrockGenerator:
+class BedrockGenerator(BaseGenerator):
     def __init__(
         self,
         region_name: str,
@@ -93,7 +99,7 @@ class BedrockGenerator:
         return self.post_func(response["output"]["message"]["content"][-1]["text"])
 
 
-class GCPGenerator:
+class GCPGenerator(BaseGenerator):
 
     def __init__(
         self,
@@ -135,7 +141,7 @@ class GCPGenerator:
         return self.post_func(result.text)
 
 
-class OpenAIGenerator:
+class OpenAIGenerator(BaseGenerator):
 
     def __init__(
         self,
@@ -166,7 +172,7 @@ class OpenAIGenerator:
         return self.post_func(chat_completion.choices[0].message.content)
 
 
-class TogetherAIGenerator:
+class TogetherAIGenerator(BaseGenerator):
 
     def __init__(
         self,

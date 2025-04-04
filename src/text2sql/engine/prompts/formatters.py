@@ -9,11 +9,7 @@ from text2sql.engine.prompts.constants import (
     FEWSHOT_ASSISTANT_TEMPLATE,
 )
 
-from text2sql.engine.prompts.constants_v2 import (
-    CHESS_COT_PROMPT,
-    ESQL_COT_PROMPT,
-    ESQL_QE_PROMPT
-)
+from text2sql.engine.prompts.constants_v2 import CHESS_COT_PROMPT, ESQL_COT_PROMPT, ESQL_QE_PROMPT
 
 from text2sql.engine.prompts.constants_v3 import SIMPLE_PROMPT_TEMPLATE_FOR_REASONERS, SIMPLE_USER_PROMPT_FOR_REASONERS
 from text2sql.engine.prompts.constants_v3 import GENA_COT_PROMPT_TEMPLATE as GENA_COT_PROMPT_V3_TEMPLATE
@@ -22,18 +18,24 @@ from text2sql.engine.prompts.constants_v3 import GENA_REPAIR_USER_MESSAGE_TEMPLA
 from text2sql.engine.prompts.constants_v3 import GENA_REWRITE_SYSTEM_PROMPT_TEMPLATE
 from text2sql.engine.prompts.constants_v3 import GENA_REWRITE_USER_MESSAGE_TEMPLATE
 from text2sql.engine.prompts.constants_v3 import (
-     GENA_MYSQL_GUIDELINES,
-     GENA_POSTGRES_GUIDELINES,
-     GENA_SQLITE_GUIDELINES,
-     GENA_USER_EXAMPLE_TEMPLATE,
-     GENA_USER_QUERY_TEMPLATE,
-     GENA_USER_QUERY_NO_DATE_TEMPLATE,
-     GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE,
-     GENA_COT_W_EVIDENCE_PROMPT_TEMPLATE,
-     GENA_ASSISTANT_TEMPLATE,
-     REWRITE_PROMPT_TEMPLATE,
-     REWRITE_USER_MESSAGE_TEMPLATE,
-     GENA_USER_QUERY_SCHEMA_TEMPLATE
+    GENA_MYSQL_GUIDELINES,
+    GENA_POSTGRES_GUIDELINES,
+    GENA_SQLITE_GUIDELINES,
+    GENA_USER_EXAMPLE_TEMPLATE,
+    GENA_USER_QUERY_TEMPLATE,
+    GENA_USER_QUERY_NO_DATE_TEMPLATE,
+    GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE,
+    GENA_COT_W_EVIDENCE_PROMPT_TEMPLATE,
+    GENA_ASSISTANT_TEMPLATE,
+    REWRITE_PROMPT_TEMPLATE,
+    REWRITE_USER_MESSAGE_TEMPLATE,
+    GENA_USER_QUERY_SCHEMA_TEMPLATE,
+)
+
+from text2sql.engine.prompts.constants_schema_linking import (
+    SCHEMA_LINKING_SYSTEM_PROMPT,
+    SCHEMA_LINKING_EXAMPLE_PROMPT_TEMPLATE,
+    SCHEMA_LINKING_USER_PROMPT_TEMPLATE,
 )
 
 
@@ -46,31 +48,28 @@ class BasePromptFormatter(ABC):
 
 class BasicFewShotPromptFormatter(BasePromptFormatter):
     """basic formatter for few-shot prompted inference.
-    
+
     this formatter generates a list of messages for few-shot prompted inference.
     this is configured for the "general" case, in which the schema information
     is only provided in the user message, and assumes the few-shot examples may
     be from other databases (e.g. BIRD, SPIDER cases).
-    
-    """
-    def __init__(
-            self,
-            few_shot_query_key: str = "question",
-            few_shot_target_key: str = "SQL",
-            markdown_format: bool = True
-        ):
-            self.few_shot_query_key = few_shot_query_key
-            self.few_shot_target_key = few_shot_target_key
-            self.markdown_format = markdown_format
 
+    """
+
+    def __init__(
+        self, few_shot_query_key: str = "question", few_shot_target_key: str = "SQL", markdown_format: bool = True
+    ):
+        self.few_shot_query_key = few_shot_query_key
+        self.few_shot_target_key = few_shot_target_key
+        self.markdown_format = markdown_format
 
     def generate_messages(
-            self, 
-            system_message: str, 
-            schema_description: str, 
-            query: str, 
-            few_shot_examples: list[dict] = [],
-        ) -> list[dict]:
+        self,
+        system_message: str,
+        schema_description: str,
+        query: str,
+        few_shot_examples: list[dict] = [],
+    ) -> list[dict]:
         messages = [{"role": "system", "content": system_message}]
         for example in few_shot_examples:
             example_query = example["data"][self.few_shot_query_key]
@@ -83,42 +82,40 @@ class BasicFewShotPromptFormatter(BasePromptFormatter):
             messages.append({"role": "assistant", "content": output})
         messages.append({"role": "user", "content": f"target schema:\n{schema_description}\n\ntarget query: {query}"})
         return messages
-    
+
 
 class LegacyFewShotPromptFormatter(BasePromptFormatter):
     """prompt formatter for few-shot prompted inference based in legacy text2sql API.
-    
+
     Like the api, the schema description is added to the system prompt.
     There is a soft assumption that the few-shot examples are from the same database.
     """
-    def __init__(
-            self,
-            database_type: str,
-            few_shot_query_key: str = "question",
-            few_shot_target_key: str = "SQL"
-        ):
-            self.database_type = database_type
-            self.few_shot_query_key = few_shot_query_key
-            self.few_shot_target_key = few_shot_target_key
+
+    def __init__(self, database_type: str, few_shot_query_key: str = "question", few_shot_target_key: str = "SQL"):
+        self.database_type = database_type
+        self.few_shot_query_key = few_shot_query_key
+        self.few_shot_target_key = few_shot_target_key
 
     def format_user_message(self, user_message: str, db_type: str, add_date: bool) -> str:
         """format a single message"""
         if add_date:
-            current_date = datetime.datetime.now().strftime('%A, %B %d, %Y')  # like "Friday, November 1, 2024"
-            return FEWSHOT_USER_QUERY_TEMPLATE.format(current_date=current_date, user_message=user_message, db_type=db_type)
+            current_date = datetime.datetime.now().strftime("%A, %B %d, %Y")  # like "Friday, November 1, 2024"
+            return FEWSHOT_USER_QUERY_TEMPLATE.format(
+                current_date=current_date, user_message=user_message, db_type=db_type
+            )
         return FEWSHOT_USER_EXAMPLE_TEMPLATE.format(user_message=user_message, db_type=db_type)
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            query: str, 
-            few_shot_examples: list[dict] = [],
-            system_message: str | None = None, 
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        query: str,
+        few_shot_examples: list[dict] = [],
+        system_message: str | None = None,
+    ) -> list[dict]:
         # if system message is provided, use it and add schema description
         if system_message:
-            if '{schema_description}' in system_message:
-                 formatted_system_message = system_message.format(schema_description=schema_description)
+            if "{schema_description}" in system_message:
+                formatted_system_message = system_message.format(schema_description=schema_description)
             elif schema_description:
                 formatted_system_message = f"{system_message}\n\ndatabase schema description:\n\n{schema_description}"
             messages = [{"role": "system", "content": formatted_system_message}]
@@ -142,20 +139,20 @@ class LegacyFewShotPromptFormatter(BasePromptFormatter):
 
 class ChessCoTPromptFormatter(BasePromptFormatter):
     def __init__(
-            self,
-            database_type: str,
-        ):
-            self.database_type = database_type
+        self,
+        database_type: str,
+    ):
+        self.database_type = database_type
 
     def format_user_message(self, schema_description: str, question: str) -> str:
         """format a single message"""
         return CHESS_COT_PROMPT.format(schema_description=schema_description, question=question)
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            query: str, 
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        query: str,
+    ) -> list[dict]:
         messages = []
         query_message = self.format_user_message(schema_description, query)
         messages.append({"role": "user", "content": query_message})
@@ -164,20 +161,20 @@ class ChessCoTPromptFormatter(BasePromptFormatter):
 
 class ESQLCoTPromptFormatter(BasePromptFormatter):
     def __init__(
-            self,
-            database_type: str,
-        ):
-            self.database_type = database_type
+        self,
+        database_type: str,
+    ):
+        self.database_type = database_type
 
     def format_user_message(self, schema_description: str, question: str) -> str:
         """format a single message"""
         return ESQL_COT_PROMPT.format(schema_description=schema_description, question=question)
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            query: str, 
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        query: str,
+    ) -> list[dict]:
         messages = []
         query_message = self.format_user_message(schema_description, query)
         messages.append({"role": "user", "content": query_message})
@@ -186,20 +183,20 @@ class ESQLCoTPromptFormatter(BasePromptFormatter):
 
 class ESQLQEPromptFormatter(BasePromptFormatter):
     def __init__(
-            self,
-            database_type: str,
-        ):
-            self.database_type = database_type
+        self,
+        database_type: str,
+    ):
+        self.database_type = database_type
 
     def format_user_message(self, schema_description: str, question: str) -> str:
         """format a single message"""
         return ESQL_QE_PROMPT.format(schema_description=schema_description, question=question)
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            query: str, 
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        query: str,
+    ) -> list[dict]:
         messages = []
         query_message = self.format_user_message(schema_description, query)
         messages.append({"role": "user", "content": query_message})
@@ -208,14 +205,15 @@ class ESQLQEPromptFormatter(BasePromptFormatter):
 
 class GenaCoTPromptFormatter(BasePromptFormatter):
     """format messages in the GENA AI API format with custom prompt template."""
+
     def __init__(
-            self,
-            database_type: str,
-            few_shot_query_key: str = "nl_en_query",
-            few_shot_target_key: str = "sql_query",
-            current_date: str = datetime.datetime.now().strftime("%A, %B %d, %Y"),
-            add_date: bool = True,
-        ):
+        self,
+        database_type: str,
+        few_shot_query_key: str = "nl_en_query",
+        few_shot_target_key: str = "sql_query",
+        current_date: str = datetime.datetime.now().strftime("%A, %B %d, %Y"),
+        add_date: bool = True,
+    ):
         self.database_type = database_type
         self.few_shot_query_key = few_shot_query_key
         self.few_shot_target_key = few_shot_target_key
@@ -223,11 +221,11 @@ class GenaCoTPromptFormatter(BasePromptFormatter):
         self.add_date = add_date
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            query: str, 
-            few_shot_examples: list[dict] = [],
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        query: str,
+        few_shot_examples: list[dict] = [],
+    ) -> list[dict]:
         if self.database_type == "mysql":
             dialect_guidelines = GENA_MYSQL_GUIDELINES
         elif self.database_type == "postgres":
@@ -238,64 +236,64 @@ class GenaCoTPromptFormatter(BasePromptFormatter):
             raise ValueError(f"unsupported database type: {self.database_type}")
 
         formatted_system_message = GENA_COT_PROMPT_V3_TEMPLATE.format(
-            sql_dialect=self.database_type,
-            dialect_guidelines=dialect_guidelines,
-            schema_description=schema_description
+            sql_dialect=self.database_type, dialect_guidelines=dialect_guidelines, schema_description=schema_description
         )
         messages = [{"role": "system", "content": formatted_system_message}]
 
         for example in few_shot_examples:
             example_query = example["data"][self.few_shot_query_key]
             example_sql = example["data"][self.few_shot_target_key]
-            messages.append({"role": "user", "content": GENA_USER_EXAMPLE_TEMPLATE.format(user_question=example_query, sql_dialect=self.database_type)})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": GENA_USER_EXAMPLE_TEMPLATE.format(
+                        user_question=example_query, sql_dialect=self.database_type
+                    ),
+                }
+            )
             messages.append({"role": "assistant", "content": GENA_ASSISTANT_TEMPLATE.format(sql_query=example_sql)})
 
         if self.add_date:
             query_message = GENA_USER_QUERY_TEMPLATE.format(
-                current_date=self.current_date, 
-                user_question=query, 
-                sql_dialect=self.database_type
+                current_date=self.current_date, user_question=query, sql_dialect=self.database_type
             )
         else:
             query_message = GENA_USER_QUERY_NO_DATE_TEMPLATE.format(
-                current_date=self.current_date, 
-                user_question=query, 
-                sql_dialect=self.database_type
+                current_date=self.current_date, user_question=query, sql_dialect=self.database_type
             )
 
         messages.append({"role": "user", "content": query_message})
         return messages
-    
+
 
 class GenaRepairPromptFormatter(BasePromptFormatter):
     """format messages for repair with custom prompt template."""
+
     def __init__(
-            self,
-            database_type: str,
-        ):
+        self,
+        database_type: str,
+    ):
         self.database_type = database_type
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            table_text: str,
-            query: str, 
-            predicted_sql: str,
-            error: str | None = None,
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        table_text: str,
+        query: str,
+        predicted_sql: str,
+        error: str | None = None,
+    ) -> list[dict]:
 
-        formatted_system_message = GENA_REPAIR_SYSTEM_PROMPT_TEMPLATE.format(
-            sql_dialect=self.database_type
-        )
+        formatted_system_message = GENA_REPAIR_SYSTEM_PROMPT_TEMPLATE.format(sql_dialect=self.database_type)
         messages = [{"role": "system", "content": formatted_system_message}]
 
         query_message = GENA_REPAIR_USER_MESSAGE_TEMPLATE.format(
-             sql_dialect=self.database_type,
-             schema_description=schema_description,
-             relevant_tables=table_text,
-             user_question=query,
-             original_sql=predicted_sql,
-             error_message=error
+            sql_dialect=self.database_type,
+            schema_description=schema_description,
+            relevant_tables=table_text,
+            user_question=query,
+            original_sql=predicted_sql,
+            error_message=error,
         )
         messages.append({"role": "user", "content": query_message})
         return messages
@@ -303,31 +301,30 @@ class GenaRepairPromptFormatter(BasePromptFormatter):
 
 class GenaRewritePromptFormatter(BasePromptFormatter):
     """format messages for rewrite with custom prompt template."""
+
     def __init__(
-            self,
-            database_type: str,
-        ):
+        self,
+        database_type: str,
+    ):
         self.database_type = database_type
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            table_text: str,
-            query: str, 
-            predicted_sql: str,
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        table_text: str,
+        query: str,
+        predicted_sql: str,
+    ) -> list[dict]:
 
-        formatted_system_message = GENA_REWRITE_SYSTEM_PROMPT_TEMPLATE.format(
-            sql_dialect=self.database_type
-        )
+        formatted_system_message = GENA_REWRITE_SYSTEM_PROMPT_TEMPLATE.format(sql_dialect=self.database_type)
         messages = [{"role": "system", "content": formatted_system_message}]
 
         query_message = GENA_REWRITE_USER_MESSAGE_TEMPLATE.format(
-             sql_dialect=self.database_type,
-             schema_description=schema_description,
-             relevant_tables=table_text,
-             user_question=query,
-             original_sql=predicted_sql      
+            sql_dialect=self.database_type,
+            schema_description=schema_description,
+            relevant_tables=table_text,
+            user_question=query,
+            original_sql=predicted_sql,
         )
         messages.append({"role": "user", "content": query_message})
         return messages
@@ -335,17 +332,18 @@ class GenaRewritePromptFormatter(BasePromptFormatter):
 
 class SimplePromptFormatter(BasePromptFormatter):
     """format messages in a simple format for reasoning models."""
+
     def __init__(
-            self,
-            database_type: str,
-        ):
+        self,
+        database_type: str,
+    ):
         self.database_type = database_type
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            query: str, 
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        query: str,
+    ) -> list[dict]:
         if self.database_type == "mysql":
             dialect_guidelines = GENA_MYSQL_GUIDELINES
         elif self.database_type == "postgres":
@@ -362,9 +360,7 @@ class SimplePromptFormatter(BasePromptFormatter):
         messages = [{"role": "system", "content": formatted_system_message}]
 
         query_message = SIMPLE_USER_PROMPT_FOR_REASONERS.format(
-            schema_description=schema_description,
-            user_question=query, 
-            sql_dialect=self.database_type
+            schema_description=schema_description, user_question=query, sql_dialect=self.database_type
         )
 
         messages.append({"role": "user", "content": query_message})
@@ -373,23 +369,24 @@ class SimplePromptFormatter(BasePromptFormatter):
 
 class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
     """format messages in the GENA AI API format with custom prompt template."""
+
     def __init__(
-            self,
-            database_type: str,
-            few_shot_query_key: str = "nl_en_query",
-            few_shot_target_key: str = "sql_query",
-        ):
+        self,
+        database_type: str,
+        few_shot_query_key: str = "nl_en_query",
+        few_shot_target_key: str = "sql_query",
+    ):
         self.database_type = database_type
         self.few_shot_query_key = few_shot_query_key
         self.few_shot_target_key = few_shot_target_key
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            query: str, 
-            evidence: str,
-            few_shot_examples: list[dict] = [],
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        query: str,
+        evidence: str,
+        few_shot_examples: list[dict] = [],
+    ) -> list[dict]:
         if self.database_type == "mysql":
             dialect_guidelines = GENA_MYSQL_GUIDELINES
         elif self.database_type == "postgres":
@@ -412,16 +409,33 @@ class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
             exmaple_desc = example["data"]["gold_filtered_schema"]
             if "evidence" in example["data"]:
                 exmaple_evidence = example["data"]["evidence"]
-                messages.append({"role": "user", "content": GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(schema_description=exmaple_desc, user_question=example_query, evidence=exmaple_evidence, sql_dialect=self.database_type)})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(
+                            schema_description=exmaple_desc,
+                            user_question=example_query,
+                            evidence=exmaple_evidence,
+                            sql_dialect=self.database_type,
+                        ),
+                    }
+                )
             else:
-                messages.append({"role": "user", "content": GENA_USER_QUERY_SCHEMA_TEMPLATE.format(schema_description=exmaple_desc, user_question=example_query, sql_dialect=self.database_type)})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": GENA_USER_QUERY_SCHEMA_TEMPLATE.format(
+                            schema_description=exmaple_desc, user_question=example_query, sql_dialect=self.database_type
+                        ),
+                    }
+                )
             messages.append({"role": "assistant", "content": GENA_ASSISTANT_TEMPLATE.format(sql_query=example_sql)})
 
         query_message = GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(
             schema_description=schema_description,
-            user_question=query, 
-            evidence=evidence, 
-            sql_dialect=self.database_type
+            user_question=query,
+            evidence=evidence,
+            sql_dialect=self.database_type,
         )
 
         messages.append({"role": "user", "content": query_message})
@@ -430,51 +444,48 @@ class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
 
 class RewritePromptFormatter(BasePromptFormatter):
     """format messages for rewrite with custom prompt template."""
+
     def __init__(
-            self,
-            database_type: str,
-        ):
+        self,
+        database_type: str,
+    ):
         self.database_type = database_type
 
     def generate_messages(
-            self, 
-            schema_description: str, 
-            query: str, 
-            predicted_sql: str,
-        ) -> list[dict]:
+        self,
+        schema_description: str,
+        query: str,
+        predicted_sql: str,
+    ) -> list[dict]:
 
-        formatted_system_message = REWRITE_PROMPT_TEMPLATE.format(
-            sql_dialect=self.database_type
-        )
+        formatted_system_message = REWRITE_PROMPT_TEMPLATE.format(sql_dialect=self.database_type)
         messages = [{"role": "system", "content": formatted_system_message}]
 
         query_message = REWRITE_USER_MESSAGE_TEMPLATE.format(
-             schema_description=schema_description,
+            schema_description=schema_description,
             #  relevant_tables=table_text,
-             user_question=query,
-             original_sql=predicted_sql      
+            user_question=query,
+            original_sql=predicted_sql,
         )
         messages.append({"role": "user", "content": query_message})
         return messages
 
 
-from text2sql.engine.prompts.constants_schema_linking import (
-    SCHEMA_LINKING_SYSTEM_PROMPT, 
-    SCHEMA_LINKING_EXAMPLE_PROMPT_TEMPLATE,
-    SCHEMA_LINKING_USER_PROMPT_TEMPLATE
-)
-
-class SelectorFormatterWExamples:
-    """format messages in the GENA AI API format with custom prompt template."""
+class SchemaLinkingFewShotFormatter:
+    """format schema linking messages with few-shot examples."""
 
     def __init__(
         self,
-        few_shot_examples : list[dict],
-        desc_type:str,
+        schema_linking_examples: list[dict],
+        description_format: str,
     ):
         self.system_prompt = SCHEMA_LINKING_SYSTEM_PROMPT
-        for example in few_shot_examples:
-            example_description: str = example["schema_descriptions"][desc_type]
+        for example in schema_linking_examples:
+            if description_format in example["schema_descriptions"]:
+                example_description: str = example["schema_descriptions"][description_format]
+            else:
+                default_key = sorted(list(example["schema_descriptions"].keys()))
+                example_description: str = example["schema_descriptions"][default_key]
             example_question: str = example["question"]
             example_evidence: str = example["evidence"]
             example_answer: str = example["answer"]
@@ -484,7 +495,7 @@ class SelectorFormatterWExamples:
                 example_evidence=example_evidence,
                 example_answer=example_answer,
             )
-        
+
         print(self.system_prompt)
 
     def generate_messages(
