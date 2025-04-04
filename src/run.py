@@ -15,8 +15,10 @@ from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 from text2sql.data import SqliteDataset, SchemaManager
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder
 from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator
+from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
 from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.retrieval import LocalRetriever
+from text2sql.engine.generation.postprocessing import extract_first_code_block
 from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens
 
 
@@ -137,9 +139,41 @@ def run_fewshot_retrieval(
     return results
 
 
-def run_sql_generation():
+def run_sql_generation(
+    generator: BaseGenerator,
+    sample: dict,
+    few_shot_results: list[dict],
+    schema_linking_outputs: dict,
+    schema_format: str,
+    schema_filtering: Literal["none", "table", "column"],
+):
     """run the sql generation task"""
-    return
+    # format messages
+    few_shot_examples: list[dict] = [result for result in few_shot_results if schema_format in result["data"]]
+    message_formatter = GenaCoTwEvidencePromptFormatter(
+        database_type="sqlite",
+        few_shot_query_key="nl_en_query",
+        few_shot_target_key="sql_query",
+        fewshot_schema_key=schema_format,
+    )
+    if schema_filtering == "table":
+        schema_description = schema_linking_outputs["table_description"]
+    elif schema_filtering == "column":
+        schema_description = schema_linking_outputs["column_description"]
+    else:
+        schema_description = schema_linking_outputs["full_description"]
+    messages = message_formatter.generate_messages(
+        schema_description=schema_description,
+        query=sample["question"],
+        evidence=sample.get("evidence", ""),
+        few_shot_examples=few_shot_examples,
+    )
+    # run inference
+    raw_prediction = generator.generate(messages, temperature=0.0)
+    sql_prediction = extract_first_code_block(raw_prediction)
+    if not sql_prediction:
+        sql_prediction = raw_prediction
+    return sql_prediction
 
 
 def run_candidate_selection():
