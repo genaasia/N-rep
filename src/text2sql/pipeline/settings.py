@@ -29,6 +29,7 @@ class PipeConfig:
     add_date: bool = True
     use_evidence: bool = False
     schema_key: str = ""
+    fewshot_schema_key: str = "gold_filtered_schema"  # Default value for backward compatibility
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -43,6 +44,7 @@ class PipeConfig:
             "pipe_name": self.pipe_name,
             "use_evidence": self.use_evidence,
             "schema_key": self.schema_key,
+            "fewshot_schema_key": self.fewshot_schema_key,
         }
 
     @classmethod
@@ -66,6 +68,7 @@ class PipeConfig:
             generator=generator,
             candidate_count=data["candidate_count"],
             pipe_name=data["pipe_name"],
+            fewshot_schema_key=data.get("fewshot_schema_key", "gold_filtered_schema"),
         )
 
 

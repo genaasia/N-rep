@@ -378,10 +378,12 @@ class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
             database_type: str,
             few_shot_query_key: str = "nl_en_query",
             few_shot_target_key: str = "sql_query",
+            fewshot_schema_key: str = "gold_filtered_schema",
         ):
         self.database_type = database_type
         self.few_shot_query_key = few_shot_query_key
         self.few_shot_target_key = few_shot_target_key
+        self.fewshot_schema_key = fewshot_schema_key
 
     def generate_messages(
             self, 
@@ -409,12 +411,12 @@ class GenaCoTwEvidencePromptFormatter(BasePromptFormatter):
         for example in few_shot_examples:
             example_query = example["data"][self.few_shot_query_key]
             example_sql = example["data"][self.few_shot_target_key]
-            exmaple_desc = example["data"]["gold_filtered_schema"]
+            example_desc = example["data"][self.fewshot_schema_key]
             if "evidence" in example["data"]:
-                exmaple_evidence = example["data"]["evidence"]
-                messages.append({"role": "user", "content": GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(schema_description=exmaple_desc, user_question=example_query, evidence=exmaple_evidence, sql_dialect=self.database_type)})
+                example_evidence = example["data"]["evidence"]
+                messages.append({"role": "user", "content": GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(schema_description=example_desc, user_question=example_query, evidence=example_evidence, sql_dialect=self.database_type)})
             else:
-                messages.append({"role": "user", "content": GENA_USER_QUERY_SCHEMA_TEMPLATE.format(schema_description=exmaple_desc, user_question=example_query, sql_dialect=self.database_type)})
+                messages.append({"role": "user", "content": GENA_USER_QUERY_SCHEMA_TEMPLATE.format(schema_description=example_desc, user_question=example_query, sql_dialect=self.database_type)})
             messages.append({"role": "assistant", "content": GENA_ASSISTANT_TEMPLATE.format(sql_query=example_sql)})
 
         query_message = GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE.format(
