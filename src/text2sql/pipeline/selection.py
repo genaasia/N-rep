@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple
 from text2sql.data.query_parser import get_table_mapping
 from text2sql.data.schema_filtering import parse_m_schema
 from text2sql.data.schema_manager import SchemaManager
-from text2sql.engine.generation.generators import GCPGenerator
+from text2sql.engine.generation.generators import BaseGenerator
 from txt2sql.metrics import execution_match
 
 # System and user prompts for query comparison
@@ -143,7 +143,7 @@ def process_prediction_pair(
     db_id: str,
     nl_en_query: str,
     evidence: str,
-    generator: GCPGenerator,
+    generator: BaseGenerator,
 ) -> Optional[Tuple[int, int]]:
     """
     Process a pair of predictions to determine which one to vote for.
@@ -214,9 +214,9 @@ def chase_voting(
     predictions: List[Dict],
     schema_manager: SchemaManager,
     db_id: str,
-    nl_en_query: str,
+    question: str,
     evidence: str,
-    generator: GCPGenerator,
+    generator: BaseGenerator,
 ) -> Dict[int, int]:
     """
     Perform chase voting on predictions using parallel processing.
@@ -225,7 +225,7 @@ def chase_voting(
         predictions: List of prediction dictionaries
         schema_manager: Schema manager instance
         db_id: Database ID
-        nl_en_query: Natural language query
+        question: Natural language query
         evidence: Evidence for the query
         generator: GCP Generator instance for query comparison
 
@@ -245,7 +245,7 @@ def chase_voting(
                 predictions,
                 schema_manager,
                 db_id,
-                nl_en_query,
+                question,
                 evidence,
                 generator,
             ),
@@ -261,14 +261,14 @@ def chase_voting(
     return prediction_votes
 
 
-def selector(
+def select_best_candidate(
     predictions: List[Dict],
     chase: bool = False,
     schema_manager: SchemaManager | None = None,
     db_id: str | None = None,
-    nl_en_query: str | None = None,
+    question: str | None = None,
     evidence: str | None = None,
-    generator: GCPGenerator | None = None,
+    generator: BaseGenerator | None = None,
 ) -> str:
     """
     Select the best prediction based on voting.
@@ -278,7 +278,7 @@ def selector(
         chase: Whether to perform chase voting
         schema_manager: Schema manager instance
         db_id: Database ID
-        nl_en_query: Natural language query
+        question: Natural language query
         evidence: Evidence for the query
         generator: GCP Generator instance for query comparison
 
@@ -304,7 +304,7 @@ def selector(
 
     if chase and schema_manager is None:
         raise ValueError("schema_manager is required for chase voting")
-    if chase and (db_id is None or nl_en_query is None or evidence is None):
+    if chase and (db_id is None or question is None or evidence is None):
         raise ValueError(
             "db_id, nl_en_query, and evidence are required for chase voting"
         )
@@ -343,7 +343,7 @@ def selector(
 
     if should_chase:
         chase_votes = chase_voting(
-            predicted_valids, schema_manager, db_id, nl_en_query, evidence, generator
+            predicted_valids, schema_manager, db_id, question, evidence, generator
         )
         
         # Handle empty chase_votes
