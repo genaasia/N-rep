@@ -12,7 +12,7 @@ from loguru import logger
 
 from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 
-from text2sql.data import SqliteDataset, SchemaManager
+from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder
 from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator
 from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
@@ -20,6 +20,8 @@ from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.retrieval import LocalRetriever
 from text2sql.engine.generation.postprocessing import extract_first_code_block
 from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens
+
+from text2sql.pipeline.selection import select_best_candidate
 
 
 def prepare_dataset_information(
@@ -93,13 +95,13 @@ def run_schema_linking(
     try:
         full_linking: dict = parse_json_from_prediction(raw_prediction)
         table_linking = dict([(table, "keep_all") for table in full_linking.keys()])
-        full_description = schema_manager.get_filtered_schema(db_id, full_linking, schema_format)
+        column_description = schema_manager.get_filtered_schema(db_id, full_linking, schema_format)
         table_description = schema_manager.get_filtered_schema(db_id, table_linking, schema_format)
     except Exception as e:
         logger.error(f"Error parsing schema linking prediction, returning all: {str(e)}")
         full_linking = None
         table_linking = None
-        full_description = schema_description
+        column_description = schema_description
         table_description = schema_description
 
     outputs = {
@@ -108,7 +110,8 @@ def run_schema_linking(
         "table_linking": table_linking,
         "column_linking": full_linking,
         "table_description": table_description,
-        "column_description": full_description,
+        "column_description": column_description,
+        "full_description": schema_description,
     }
 
     return outputs
@@ -176,9 +179,42 @@ def run_sql_generation(
     return sql_prediction
 
 
-def run_candidate_selection():
+def run_candidate_selection(
+        dataset: BaseDataset, 
+        schema_manager: SchemaManager, 
+        generator: BaseGenerator,
+        sample: dict, 
+        candidate_sqls: list[str],
+        chase: bool = False,
+    ) -> str:
     """run the candidate selection task"""
-    return
+    # for each sample, prepare the execution result dict
+    database: str = sample["db_id"]
+    sample_dicts: list[dict] = []
+    for sql_query in candidate_sqls:
+        try:
+            execution_results: list[dict] = dataset.query_database(database, sql_query)
+            is_valid = True
+        except Exception as e:
+            execution_results = []
+            is_valid = False
+
+        sample_dicts.append({
+            "sql": sql_query,
+            "valid": is_valid,
+            "results": execution_results,
+        })
+    # run selection
+    best_sql = select_best_candidate(
+        predictions=sample_dicts,
+        schema_manager=schema_manager,
+        db_id=database,
+        question=sample["question"],
+        evidence=sample.get("evidence", ""),
+        generator=generator,
+        chase=chase,
+    )
+    return best_sql
 
 
 def main():
@@ -304,29 +340,46 @@ def main():
     logger.warning("!!!!! Running single test !!!!!")
 
     sample = test_data[0]
-    schema_format = "m_schema"
-    schema_filtering_mode = "column"
+    top_k = 3
 
-    logger.info("[test] doing schema linking")
-    schema_linking_outputs = run_schema_linking(gcp_generator, schema_manager, sample, schema_format)
-    logger.info(
-        f"[test] schema linking output: type {type(schema_linking_outputs).__name__} with keys {schema_linking_outputs.keys()}"
-    )
-    logger.info("[test] doing schema linking")
-    few_shot_results = run_fewshot_retrieval(embedder=embedder, retriever=retriever, sample=sample, top_k=3)
-    logger.info(
-        f"[test] fewshot retrieval output: type {type(few_shot_results).__name__} with keys {few_shot_results[0].keys()}"
-    )
-    logger.info(f"[test] doing sql generation with gcp generator, '{schema_filtering_mode}' schema filtering")
-    sql = run_sql_generation(
-        generator=gcp_generator,
+    candidate_sqls: list[str] = []
+    for schema_format, schema_filtering_mode in [
+        ("sql", "none"),
+        ("m_schema", "column"),
+        ("mac_schema", "table"),
+    ]:
+        logger.info(f"[test] doing schema linking with '{schema_format}' schema format and '{schema_filtering_mode}' schema filtering")
+        schema_linking_outputs = run_schema_linking(gcp_generator, schema_manager, sample, schema_format)
+        logger.info(
+            f"[test] schema linking output: type {type(schema_linking_outputs).__name__} with keys {schema_linking_outputs.keys()}"
+        )
+        logger.info("[test] doing schema linking")
+        few_shot_results = run_fewshot_retrieval(embedder=embedder, retriever=retriever, sample=sample, top_k=top_k)
+        logger.info(
+            f"[test] fewshot retrieval output: type {type(few_shot_results).__name__} with keys {few_shot_results[0].keys()}"
+        )
+        logger.info(f"[test] doing sql generation with gcp generator, '{schema_filtering_mode}' schema filtering")
+        sql = run_sql_generation(
+            generator=gcp_generator,
+            sample=sample,
+            few_shot_results=few_shot_results,
+            schema_linking_outputs=schema_linking_outputs,
+            schema_format=schema_format,
+            schema_filtering=schema_filtering_mode,
+        )
+        candidate_sqls.append(sql)
+        logger.info(f"[test] predicted sql candidate: {sql}")
+
+    best_sql = run_candidate_selection(
+        dataset=dataset,
+        schema_manager=schema_manager,
         sample=sample,
-        few_shot_results=few_shot_results,
-        schema_linking_outputs=schema_linking_outputs,
-        schema_format=schema_format,
-        schema_filtering=schema_filtering_mode,
+        candidate_sqls=candidate_sqls,
+        generator=gcp_generator,
+        chase=True,
     )
-    logger.info(f"[test] predicted sql: {sql}")
+    logger.info(f"[test] best sql: {best_sql}")
+        
 
 
 if __name__ == "__main__":

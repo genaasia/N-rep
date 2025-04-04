@@ -10,6 +10,8 @@ python-dotenv
 tenacity
 func_timeout
 sentence-transformers
+sqlglot
+sql_metadata
 
 # AI/ML dependencies
 openai
