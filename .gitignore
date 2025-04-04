@@ -226,3 +226,4 @@ gena-agent/**/*.svg
 gena-agent/**/*.png
 gena-agent/**/*.jpg
 scripts/bird_inference_example/**/*.json
+tests/output**

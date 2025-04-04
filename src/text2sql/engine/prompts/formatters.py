@@ -484,7 +484,7 @@ class SchemaLinkingFewShotFormatter:
             if description_format in example["schema_descriptions"]:
                 example_description: str = example["schema_descriptions"][description_format]
             else:
-                default_key = sorted(list(example["schema_descriptions"].keys()))
+                default_key = sorted(list(example["schema_descriptions"].keys()))[0]
                 example_description: str = example["schema_descriptions"][default_key]
             example_question: str = example["question"]
             example_evidence: str = example["evidence"]
@@ -495,8 +495,6 @@ class SchemaLinkingFewShotFormatter:
                 example_evidence=example_evidence,
                 example_answer=example_answer,
             )
-
-        print(self.system_prompt)
 
     def generate_messages(
         self,

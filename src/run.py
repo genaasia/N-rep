@@ -8,11 +8,14 @@ import tqdm
 from dotenv import load_dotenv
 from loguru import logger
 
-from text2sql.data import SqliteDataset, SchemaManager
+from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 
+from text2sql.data import SqliteDataset, SchemaManager
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder
 from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator
+from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.retrieval import LocalRetriever
+from text2sql.utils import parse_json_from_prediction
 
 
 def prepare_dataset_information(
@@ -58,17 +61,51 @@ def prepare_fewshot_retriever(embeddings_path: str, embeddings_data_path: str) -
     return retriever
 
 
-def run_schema_linking(sample: dict, schema_manager: SchemaManager) -> dict:
+def run_schema_linking(
+    generator: BaseGenerator,
+    schema_manager: SchemaManager,
+    sample: dict,
+    schema_format: str,
+) -> dict:
     """run the schema linking task
 
     Args:
-        sample: one sample from the test set json
+        generator: LLM generator
         schema_manager: the schema manager
+        sample: one sample from the test set json
+        schema_format: schema mode to use
     Returns:
-        outputs: dict with the mapping, table_filtered and column_filtered results
+        outputs: dict with the table_linking, column_linking, table_description and column_description
     """
+    db_id = sample["db_id"]
+    question = sample["question"]
+    evidence = sample.get("evidence", "")
 
-    outputs = {}
+    # generate the input messages and run inference
+    message_formatter = SchemaLinkingFewShotFormatter(SCHEMA_LINKING_EXAMPLES, description_format=schema_format)
+    schema_description = schema_manager.get_full_schema(db_id, schema_format)
+    messages = message_formatter.generate_messages(schema_description, question, evidence)
+    raw_prediction = generator.generate(messages, temperature=0.0)
+    try:
+        full_linking: dict = parse_json_from_prediction(raw_prediction)
+        table_linking = dict([(table, "keep_all") for table in full_linking.keys()])
+        full_description = schema_manager.get_filtered_schema(db_id, full_linking, schema_format)
+        table_description = schema_manager.get_filtered_schema(db_id, table_linking, schema_format)
+    except Exception as e:
+        logger.error(f"Error parsing schema linking prediction, returning all: {str(e)}")
+        full_linking = None
+        table_linking = None
+        full_description = schema_description
+        table_description = schema_description
+
+    outputs = {
+        "messages": messages,
+        "prediction": raw_prediction,
+        "table_linking": table_linking,
+        "column_linking": full_linking,
+        "table_description": table_description,
+        "column_description": full_description,
+    }
 
     return outputs
 
