@@ -24,6 +24,7 @@ class PipeConfig:
     generator: GeneratorConfig
     candidate_count: int
     pipe_name: str
+    fewshot_schema_key: str
     rewrite: bool = False
     repair: bool = False
     add_date: bool = True
@@ -43,6 +44,7 @@ class PipeConfig:
             "pipe_name": self.pipe_name,
             "use_evidence": self.use_evidence,
             "schema_key": self.schema_key,
+            "fewshot_schema_key": self.fewshot_schema_key,
         }
 
     @classmethod
@@ -66,6 +68,7 @@ class PipeConfig:
             generator=generator,
             candidate_count=data["candidate_count"],
             pipe_name=data["pipe_name"],
+            fewshot_schema_key=data["fewshot_schema_key"],
         )
 
 

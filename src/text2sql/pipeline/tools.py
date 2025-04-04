@@ -62,7 +62,7 @@ def get_generator(generator_name, model, post_func):
     return generator
 
 
-def get_formatter(formatter_name, database_type, add_date):
+def get_formatter(formatter_name, database_type, add_date, fewshot_schema_key="gold_filtered_schema"):
     if formatter_name == "legacy":
         formatter = LegacyFewShotPromptFormatter(database_type=database_type)
     elif formatter_name == "ESQLCoT":
@@ -72,7 +72,7 @@ def get_formatter(formatter_name, database_type, add_date):
     elif formatter_name == "SimpleReasoner":
         formatter = SimplePromptFormatter(database_type=database_type)
     elif formatter_name == "GenaCoTwEvidence":
-        formatter = GenaCoTwEvidencePromptFormatter(database_type=database_type)
+        formatter = GenaCoTwEvidencePromptFormatter(database_type=database_type, fewshot_schema_key=fewshot_schema_key)
     else:
         raise Exception(f"No known formatter with the name {formatter_name}")
     return formatter

@@ -41,6 +41,7 @@ pipe_configurations:
         temperature: 0
       top_k: 3
     candidate_count: 1
+    fewshot_schema_key: mac_schema
     pipe_name: pipe_v1
   - formatter: GENACoTZs
     repair: True
@@ -53,6 +54,7 @@ pipe_configurations:
         temperature: 0.5
       top_k: 5
     candidate_count: 5
+    fewshot_schema_key: mac_schema
     pipe_name: pipe_v2
   - formatter: legacy
     schema: basic
@@ -64,6 +66,7 @@ pipe_configurations:
         temperature: 1
       top_k: 8
     candidate_count: 3
+    fewshot_schema_key: mac_schema
     pipe_name: pipe_v3
   - formatter: GENACoT
     schema: basic_types_relations
@@ -80,6 +83,7 @@ pipe_configurations:
             budget_tokens: 16000
       top_k: 0
     candidate_count: 1
+    fewshot_schema_key: mac_schema
     pipe_name: pipe_v1_basic_types_relations
   - formatter: GENACoT
     schema: basic_types_relations
@@ -90,6 +94,7 @@ pipe_configurations:
       config:
       top_k: 0
     candidate_count: 1
+    fewshot_schema_key: mac_schema
     pipe_name: pipe_v1_basic_types_relations
   - formatter: GENACoT
     schema: basic_types_relations
@@ -100,4 +105,5 @@ pipe_configurations:
       config:
       top_k: 0
     candidate_count: 1
+    fewshot_schema_key: mac_schema
     pipe_name: pipe_v1_basic_types_relations
