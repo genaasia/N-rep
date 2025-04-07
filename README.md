@@ -71,6 +71,8 @@ the following arguments have defaults set in run.py:
 - `--embeddings-data-path`: path to the associated text-SQL pair data for few-shot ICL (default: "./bird_data/valid_multi_table_queries.json") 
 - `--column-meaning-json-path` : (*optional*) path to the column meaning json file (default: None) - ***this is NOT used for this submission***
 
+you can test with `--debug` parameter, which takes `int` (number of samples to run).
+
 we include processed BIRD-train data for your convenience. see "Notes" section for details on train data processing.
 
 ### dev example command
