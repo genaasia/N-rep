@@ -11,7 +11,7 @@ from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from text2sql.engine.clients import get_azure_client, get_bedrock_client, get_openai_client, get_togetherai_client
 from text2sql.engine.generation.converters import convert_messages_to_bedrock_format
-
+from text2sql.utils import TokenCounter
 
 def identity(x: str) -> str:
     return x
@@ -32,7 +32,7 @@ class AzureGenerator(BaseGenerator):
         azure_endpoint: str,
         model: str,
         post_func: Callable[[str], str] = identity,
-        counter: Callable | None = None,
+        counter: TokenCounter | None = None,
         **kwargs,
     ):
         """generate text using Azure OpenAI API
@@ -61,7 +61,10 @@ class AzureGenerator(BaseGenerator):
         """embed one batch of texts with azure"""
         chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
         if self.counter:
-            self.counter(chat_completion.usage)
+            self.counter.add_token_counts(
+                chat_completion.usage.prompt_tokens,
+                chat_completion.usage.completion_tokens,
+            )
         return self.post_func(chat_completion.choices[0].message.content)
 
 
@@ -111,7 +114,7 @@ class GCPGenerator(BaseGenerator):
         api_key: str,
         model: str,
         post_func: Callable[[str], str] = identity,
-        counter: Callable | None = None,
+        counter: TokenCounter | None = None,
     ):
         """generate text using GCP API
 
@@ -146,7 +149,10 @@ class GCPGenerator(BaseGenerator):
 
         result = chat.send_message(messages[-1]["content"])
         if self.counter:
-            self.counter(result.usage_metadata)
+            self.counter.add_token_counts(
+                result.usage_metadata.prompt_token_count,
+                result.usage_metadata.candidates_token_count,
+            )
         return self.post_func(result.text)
 
 
