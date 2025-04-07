@@ -82,10 +82,21 @@ def main():
     # Calculate and print average score
     if len(results) > 0:
         average_score = sum(results) / len(results)
+        valid_percentage = valid_count / len(results)
         print()
-        print(f"Valid Percentage : {valid_count / len(results):.4f} ({valid_count}/{len(results)})")
+        print(f"Valid Percentage : {valid_percentage:.4f} ({valid_count}/{len(results)})")
         print(f"Execution Match  : {average_score:.4f} ({sum(results)}/{len(results)})")
-
+        # also save to file (raw results and final scores), save to predictions path
+        outfile_name = args.predictions_path.replace(".json", "_scores.json")
+        with open(outfile_name, "w") as f:
+            json.dump(
+                {
+                    "ex_results": results,
+                    "valid_percentage": valid_percentage,
+                    "ex_match": average_score,
+                },
+                f,
+            )
     else:
         print("No valid samples processed")
 
