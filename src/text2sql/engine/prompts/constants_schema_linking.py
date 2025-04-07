@@ -78,4 +78,4 @@ Before providing the final answer, analyze the question thoroughly using these s
 
 Remember to MAXIMIZE RECALL - include ANY table or column that could possibly be relevant, even if you're not certain. It's better to include too many tables than to miss important ones.
 
-Please give me the reasoning steps first and then only the answer in a JSON markdown code block."""
+Please give me the reasoning steps first and then the answer as a JSON inside amarkdown code block."""

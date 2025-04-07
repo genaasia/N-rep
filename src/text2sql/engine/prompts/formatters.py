@@ -1,4 +1,5 @@
 import datetime
+import json
 
 from abc import ABC, abstractmethod
 
@@ -493,12 +494,12 @@ class SchemaLinkingFewShotFormatter:
                 example_description: str = example["schema_descriptions"][default_key]
             example_question: str = example["question"]
             example_evidence: str = example["evidence"]
-            example_answer: str = example["answer"]
+            example_answer: dict = example["answer"]
             self.system_prompt += SCHEMA_LINKING_EXAMPLE_PROMPT_TEMPLATE.format(
                 example_description=example_description,
                 example_question=example_question,
                 example_evidence=example_evidence,
-                example_answer=example_answer,
+                example_answer=json.dumps(example_answer, ensure_ascii=False, indent=2),
             )
 
     def generate_messages(
