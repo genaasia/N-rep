@@ -65,7 +65,7 @@ def get_sqlite_schema(base_dir: str, database: str) -> dict[str, Any]:
                 break
 
     for table in tables:
-        if table[0] == "sqlite_sequence":
+        if table[0] in ["sqlite_sequence", "sqlite_stat1"]:
             continue
         table_name = table[0]
         schema["tables"][table_name] = {"columns": {}, "keys": {}, "foreign_keys": {}}
