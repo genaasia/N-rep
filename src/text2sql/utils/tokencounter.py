@@ -4,7 +4,7 @@ import threading
 class TokenCounter:
     def __init__(self):
         """A thread-safe counter for tracking token usage in LLM API calls.
-        
+
         All operations are protected by a threading lock to ensure thread safety
         when updating counts from multiple threads.
         """
@@ -13,10 +13,10 @@ class TokenCounter:
         self.total_tokens: int = 0
         self.call_count: int = 0
         self.lock = threading.Lock()
-    
+
     def add_token_counts(self, prompt_tokens, completion_tokens) -> None:
         """Add token counts to the counter and increase call count.
-        
+
         Args:
             prompt_tokens (int): The number of prompt tokens.
             completion_tokens (int): The number of completion tokens.
@@ -26,10 +26,10 @@ class TokenCounter:
             self.completion_tokens += completion_tokens
             self.total_tokens += prompt_tokens + completion_tokens
             self.call_count += 1
-    
+
     def get_counts(self) -> dict:
         """Get the current token counts.
-        
+
         Returns:
             A dictionary containing all token counts and call count.
         """
@@ -38,5 +38,39 @@ class TokenCounter:
                 "prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
                 "total_tokens": self.total_tokens,
+                "call_count": self.call_count,
+            }
+
+
+class CharacterCounter:
+    def __init__(self):
+        """A thread-safe counter for tracking character usage in LLM API calls.
+
+        All operations are protected by a threading lock to ensure thread safety
+        when updating counts from multiple threads.
+        """
+        self.characters: int = 0
+        self.call_count: int = 0
+        self.lock = threading.Lock()
+
+    def add_character_counts(self, characters: int) -> None:
+        """Add token counts to the counter and increase call count.
+
+        Args:
+            characters (int): The number of (input) characters.
+        """
+        with self.lock:
+            self.characters += characters
+            self.call_count += 1
+
+    def get_counts(self) -> dict:
+        """Get the current character counts.
+
+        Returns:
+            A dictionary containing character count and call count.
+        """
+        with self.lock:
+            return {
+                "characters": self.characters,
                 "call_count": self.call_count,
             }
