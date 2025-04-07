@@ -1,6 +1,0 @@
-dotenv
-numpy
-openai
-pandas
-sqlfluff
-tenacity

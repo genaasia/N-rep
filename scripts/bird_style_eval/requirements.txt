@@ -1,4 +1,0 @@
-func-timeout
-tqdm
-pandas
-rapidfuzz
