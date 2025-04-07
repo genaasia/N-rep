@@ -6,6 +6,7 @@ import warnings
 
 from collections import defaultdict
 from multiprocessing.pool import ThreadPool
+import threading
 from typing import Literal
 
 import numpy as np
@@ -27,6 +28,62 @@ from text2sql.engine.generation.postprocessing import extract_first_code_block
 from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens
 
 from text2sql.pipeline.selection import select_best_candidate
+
+
+class TokenCounter:
+    """A thread-safe class to track token usage across different LLM providers.
+    
+    This class maintains counters for prompt and completion tokens used by different
+    LLM providers (Azure, GCP) and provides methods to update these counters safely
+    in a multi-threaded environment.
+    """
+    def __init__(self):
+        """Initialize counters for different LLM providers."""
+        self.gcp_prompt_token_count: int = 0
+        self.gcp_completion_token_count: int = 0
+        self.azure_prompt_token_count: int = 0
+        self.azure_completion_token_count: int = 0
+        self.gcp_call_count: int = 0
+        self.azure_call_count: int = 0
+        self.lock = threading.Lock()
+    
+    def add_gcp_prompt_token_count(self, usage_metadata) -> None:
+        """Update GCP token counts with the provided usage metadata.
+        
+        Args:
+            usage_metadata: The usage metadata from GCP API response.
+        """
+        with self.lock:
+            self.gcp_prompt_token_count += usage_metadata.prompt_token_count
+            self.gcp_completion_token_count += usage_metadata.candidates_token_count
+            self.gcp_call_count += 1
+    
+    def add_azure_prompt_token_count(self, usage_metadata) -> None:
+        """Update Azure token counts with the provided usage metadata.
+        
+        Args:
+            usage_metadata: The usage metadata from Azure API response.
+        """
+        with self.lock:
+            self.azure_prompt_token_count += usage_metadata.prompt_tokens
+            self.azure_completion_token_count += usage_metadata.completion_tokens
+            self.azure_call_count += 1
+    
+    def get_counts(self) -> dict:
+        """Get the current token counts for all providers.
+        
+        Returns:
+            A dictionary containing all token counts and call counts.
+        """
+        with self.lock:
+            return {
+                "gcp_prompt_token_count": self.gcp_prompt_token_count,
+                "gcp_completion_token_count": self.gcp_completion_token_count,
+                "azure_prompt_token_count": self.azure_prompt_token_count,
+                "azure_completion_token_count": self.azure_completion_token_count,
+                "gcp_call_count": self.gcp_call_count,
+                "azure_call_count": self.azure_call_count,
+            }
 
 
 def prepare_dataset_information(
@@ -472,11 +529,14 @@ def main():
     logger.info("Creating & testing azure generator...")
     test_messages = [{"role": "user", "content": "What is the capital of South Korea? Answer in one word."}]
 
+    token_counter = TokenCounter()
+
     azure_generator = AzureGenerator(
         model=os.getenv("AZURE_OPENAI_MODEL"),
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),
         azure_endpoint=os.getenv("AZURE_OPENAI_API_ENDPOINT"),
         api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        counter=token_counter.add_azure_prompt_token_count,
     )
     p = azure_generator.generate(test_messages, temperature=0.0)
     logger.info(f"Azure generator test response: '{p}'")
@@ -485,6 +545,7 @@ def main():
     gcp_generator = GCPGenerator(
         model="gemini-1.5-flash",
         api_key=os.getenv("GCP_KEY"),
+        counter=token_counter.add_gcp_prompt_token_count,
     )
 
     p = gcp_generator.generate(test_messages, temperature=0.0)
@@ -554,6 +615,11 @@ def main():
 
         with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
             json.dump(prediction_outputs, f, indent=2)
+  
+    counts = token_counter.get_counts()
+    logger.info(f"Counts: {json.dumps(counts, indent=4)}")
+    with open(os.path.join(args.output_path, "counts.json"), "w") as f:
+        json.dump(counts, f, indent=4)
 
 
 if __name__ == "__main__":
