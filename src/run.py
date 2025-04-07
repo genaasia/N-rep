@@ -378,8 +378,9 @@ def main():
     )
     parser.add_argument(
         "--debug",
-        action="store_true",
-        help="run in debug mode (do small subset of data)",
+        type=int,
+        default=None,
+        help="run in debug mode (do small subset of data, default is None)",
     )
     args = parser.parse_args()
 
@@ -514,7 +515,7 @@ def main():
     # check for debug mode
     if args.debug:
         logger.warning("!!!!! DEBUG - Running on data subset !!!!!")
-        test_data = test_data[:10]
+        test_data = test_data[: args.debug]
     else:
         logger.remove()
         logger.add(sys.stderr, level="INFO")
@@ -531,55 +532,80 @@ def main():
 
             idx = int(sample.get("question_id", _idx))
 
-            # run schema linking in parallel, one for each schema format and model
-            logger.debug(f"[{idx:03d}] doing schema linking...")
-            schema_linking_outputs: defaultdict = run_candidate_schema_linking(
-                sample,
-                candidate_configs,
-                schema_manager,
-                azure_linker_token_counter,
-                gcp_linker_token_counter,
-            )
+            try:
 
-            # get few-shot retrieval results
-            logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
-            few_shot_results: list[dict] = run_fewshot_retrieval(
-                embedder=embedder,
-                retriever=retriever,
-                sample=sample,
-                top_k=top_k,
-            )
+                # run schema linking in parallel, one for each schema format and model
+                logger.debug(f"[{idx:03d}] doing schema linking...")
+                schema_linking_outputs: defaultdict = run_candidate_schema_linking(
+                    sample,
+                    candidate_configs,
+                    schema_manager,
+                    azure_linker_token_counter,
+                    gcp_linker_token_counter,
+                )
 
-            # run SQL generation in parallel, one for each candidate config
-            logger.debug(f"[{idx:03d}] doing candidate sql generation...")
-            candidate_sqls: list[str] = run_candidate_sql_generation(
-                sample=sample,
-                generator=gcp_generator_candidate,
-                candidate_configs=candidate_configs,
-                schema_linking_outputs=schema_linking_outputs,
-                few_shot_results=few_shot_results,
-            )
-            # do candidate selection in single call - runs parallel under the hood
-            logger.debug(f"[{idx:03d}] doing candidate selection...")
-            best_sql: str = run_candidate_selection(
-                dataset=dataset,
-                schema_manager=schema_manager,
-                sample=sample,
-                candidate_sqls=candidate_sqls,
-                generator=gcp_generator_selection,
-                chase=True,
-            )
-            logger.debug(f"[{idx:03d}] best sql: {best_sql}")
-            prediction_outputs[str(idx)] = best_sql
+                # get few-shot retrieval results
+                logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
+                few_shot_results: list[dict] = run_fewshot_retrieval(
+                    embedder=embedder,
+                    retriever=retriever,
+                    sample=sample,
+                    top_k=top_k,
+                )
+
+                # run SQL generation in parallel, one for each candidate config
+                logger.debug(f"[{idx:03d}] doing candidate sql generation...")
+                candidate_sqls: list[str] = run_candidate_sql_generation(
+                    sample=sample,
+                    generator=gcp_generator_candidate,
+                    candidate_configs=candidate_configs,
+                    schema_linking_outputs=schema_linking_outputs,
+                    few_shot_results=few_shot_results,
+                )
+                # do candidate selection in single call - runs parallel under the hood
+                logger.debug(f"[{idx:03d}] doing candidate selection...")
+                best_sql: str = run_candidate_selection(
+                    dataset=dataset,
+                    schema_manager=schema_manager,
+                    sample=sample,
+                    candidate_sqls=candidate_sqls,
+                    generator=gcp_generator_selection,
+                    chase=True,
+                )
+                logger.debug(f"[{idx:03d}] best sql: {best_sql}")
+                prediction_outputs[str(idx)] = best_sql
+            except Exception as e:
+                # like BIRD example dev data, add 0 if error
+                logger.error(f"[{idx:03d}] {type(e).__name__}: {str(e)} - setting to 0")
+                prediction_outputs[str(idx)] = 0
 
         with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
             json.dump(prediction_outputs, f, indent=2)
+
+    total_dict = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "call_count": 0,
+    }
+
+    for token_counter in [
+        azure_linker_token_counter,
+        gcp_linker_token_counter,
+        gcp_candidate_token_counter,
+        gcp_selection_token_counter,
+    ]:
+        total_dict["prompt_tokens"] += token_counter.prompt_tokens
+        total_dict["completion_tokens"] += token_counter.completion_tokens
+        total_dict["total_tokens"] += token_counter.total_tokens
+        total_dict["call_count"] += token_counter.call_count
 
     all_counts = {
         "azure_linker_counts": azure_linker_token_counter.get_counts(),
         "gcp_linker_counts": gcp_linker_token_counter.get_counts(),
         "gcp_candidate_counts": gcp_candidate_token_counter.get_counts(),
         "gcp_selection_counts": gcp_selection_token_counter.get_counts(),
+        "total": total_dict,
     }
     logger.info(f"Token Counts: {json.dumps(all_counts, indent=4)}")
     with open(os.path.join(args.output_path, "token_counts.json"), "w") as f:
