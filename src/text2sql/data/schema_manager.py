@@ -1,6 +1,10 @@
-from typing import Dict, List, Optional
 import json
+
 from pathlib import Path
+from typing import Dict, List, Optional
+
+import tqdm
+
 from text2sql.data.datasets import BaseDataset
 from text2sql.data.schema_filtering import (
     parse_mac_schema,
@@ -91,23 +95,30 @@ class SchemaManager:
 
     def _load_schemas(self):
         """Load schema descriptions for all databases and modes."""
-        for db_name in self.dataset.get_databases():
-            self.schema_maps[db_name] = self.dataset.get_database_schema(db_name)
-            self.schemas[db_name] = {}
-            for mode in self.supported_modes:
-                effective_mode = self._get_effective_mode(mode, db_name)
-
-                # Handle mac-schema mode specially
-                if effective_mode == "mac_schema":
-                    table_descriptions = self._get_table_descriptions(db_name)
-                    schema = self.dataset.describe_database_schema(
-                        db_name, effective_mode, table_descriptions=table_descriptions
-                    )
-                else:
-                    schema = self.dataset.describe_database_schema(db_name, effective_mode)
-
-                # Store under the original mode name for consistent access
-                self.schemas[db_name][mode] = schema
+        total_steps = len(self.dataset.get_databases()) * len(self.supported_modes)
+        with tqdm.tqdm(total=total_steps, desc="Loading schemas") as pbar:
+            for db_name in self.dataset.get_databases():
+                self.schema_maps[db_name] = self.dataset.get_database_schema(db_name)
+                self.schemas[db_name] = {}
+                for mode in self.supported_modes:
+                    effective_mode = self._get_effective_mode(mode, db_name)
+                    # Handle mac-schema mode specially
+                    if effective_mode == "mac_schema":
+                        # if mac_schema is already loaded, skip
+                        if (
+                            self.schemas[db_name].get("mac_schema") is None
+                            or self.schemas[db_name].get("mac_schema_basic") is None
+                        ):
+                            table_descriptions = self._get_table_descriptions(db_name)
+                            schema = self.dataset.describe_database_schema(
+                                db_name, effective_mode, table_descriptions=table_descriptions
+                            )
+                            self.schemas[db_name]["mac_schema"] = schema
+                            self.schemas[db_name]["mac_schema_basic"] = schema
+                    else:
+                        schema = self.dataset.describe_database_schema(db_name, effective_mode)
+                        self.schemas[db_name][mode] = schema
+                    pbar.update(1)
 
     def get_filtered_schema(self, database_name: str, filter_dict: Dict[str, List[str]], mode: str) -> str:
         """Get a filtered schema description for a database.
