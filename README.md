@@ -42,7 +42,7 @@ you may check the code that calls the external LLMs in `./src/text2sql/engine/ge
 ### Models Used
 
 - (AWS Bedrock) Cohere Multilingual v3 - for few-shot retrieval
-- (Azure OpenAI) GPT-4o (`2024-05-13`) - for schema linking
+- (Azure OpenAI) GPT-4o (`2024-08-06`) - for schema linking
 - (Google Cloud) Gemini 1.5 Pro - for schema linking
 - (Google Cloud) Gemini 1.5 flash - for SQL generation and candidate selection
 
