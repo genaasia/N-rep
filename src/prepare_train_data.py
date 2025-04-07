@@ -2,16 +2,20 @@ import argparse
 import concurrent.futures
 import json
 import multiprocessing
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
+import numpy as np
 import spacy
+from dotenv import load_dotenv
 from tqdm import tqdm
 
 from text2sql.data import SchemaManager, SqliteDataset
 from text2sql.data.query_parser import get_table_mapping
+from text2sql.engine.embeddings import BedrockCohereEmbedder
 
 
 @dataclass
@@ -410,6 +414,21 @@ def process_queries(args) -> None:
     print_statistics(
         train_data, valid_multi_table_queries, single_table_count, invalid_query_count
     )
+
+    # Get the embeddings
+    load_dotenv()
+
+    embedder = BedrockCohereEmbedder(
+        model=os.getenv("AWS_MODEL_NAME"),
+        region_name=os.getenv("AWS_REGION_NAME"),
+        input_type=os.getenv("AWS_INPUT_TYPE"),
+    )
+
+    embedding_path = args.output_path.replace(".json", "_embeddings.npy")
+    print(f"generating train embeddings and saving to '{embedding_path}'")
+    masked_questions = [item["question_masked"] for item in valid_multi_table_queries]
+    train_embeddings = embedder.embed(masked_questions, verbose=True)
+    np.save(embedding_path, train_embeddings)
 
 
 if __name__ == "__main__":

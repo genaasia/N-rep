@@ -225,8 +225,8 @@ def run_sql_generation(
     few_shot_examples: list[dict] = [result for result in few_shot_results if schema_format in result["data"]]
     message_formatter = GenaCoTwEvidencePromptFormatter(
         database_type="sqlite",
-        few_shot_query_key="nl_en_query",
-        few_shot_target_key="sql_query",
+        few_shot_query_key="question",
+        few_shot_target_key="SQL",
         fewshot_schema_key=schema_format,
     )
     if schema_filtering == "table":
