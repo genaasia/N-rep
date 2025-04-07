@@ -348,13 +348,13 @@ def main():
     parser.add_argument(
         "--embeddings-path",
         type=str,
-        required=True,
+        default="./bird_data/valid_multi_table_queries_embeddings.npy",
         help="path to preprocessed numpy embeddings file",
     )
     parser.add_argument(
         "--embeddings-data-path",
         type=str,
-        required=True,
+        default="./bird_data/valid_multi_table_queries.json",
         help="path to preprocessed json embeddings data file",
     )
     parser.add_argument(
@@ -527,10 +527,12 @@ def main():
             "ignore", message="datetime.datetime.utcnow.*is deprecated", category=DeprecationWarning
         )
 
-        for idx, sample in enumerate(tqdm.tqdm(test_data)):
+        for _idx, sample in enumerate(tqdm.tqdm(test_data)):
 
-            # run schema linking in parallel, one for each
-            logger.debug(f"[{idx:03d}] doing multithreaded schema linking...")
+            idx = int(sample.get("question_id", _idx))
+
+            # run schema linking in parallel, one for each schema format and model
+            logger.debug(f"[{idx:03d}] doing schema linking...")
             schema_linking_outputs: defaultdict = run_candidate_schema_linking(
                 sample,
                 candidate_configs,
@@ -539,7 +541,7 @@ def main():
                 gcp_linker_token_counter,
             )
 
-            # single call for all candidates
+            # get few-shot retrieval results
             logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
             few_shot_results: list[dict] = run_fewshot_retrieval(
                 embedder=embedder,
@@ -548,7 +550,7 @@ def main():
                 top_k=top_k,
             )
 
-            # do candidate selection in parallel
+            # run SQL generation in parallel, one for each candidate config
             logger.debug(f"[{idx:03d}] doing candidate sql generation...")
             candidate_sqls: list[str] = run_candidate_sql_generation(
                 sample=sample,
@@ -557,7 +559,8 @@ def main():
                 schema_linking_outputs=schema_linking_outputs,
                 few_shot_results=few_shot_results,
             )
-            # single call - runs parallel under the hood
+            # do candidate selection in single call - runs parallel under the hood
+            logger.debug(f"[{idx:03d}] doing candidate selection...")
             best_sql: str = run_candidate_selection(
                 dataset=dataset,
                 schema_manager=schema_manager,
@@ -571,7 +574,7 @@ def main():
 
         with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
             json.dump(prediction_outputs, f, indent=2)
-  
+
     all_counts = {
         "azure_linker_counts": azure_linker_token_counter.get_counts(),
         "gcp_linker_counts": gcp_linker_token_counter.get_counts(),
@@ -579,8 +582,8 @@ def main():
         "gcp_selection_counts": gcp_selection_token_counter.get_counts(),
     }
     logger.info(f"Token Counts: {json.dumps(all_counts, indent=4)}")
-    with open(os.path.join(args.output_path, "counts.json"), "w") as f:
-        json.dump(all_counts, f, indent=4)
+    with open(os.path.join(args.output_path, "token_counts.json"), "w") as f:
+        json.dump(all_counts, f, indent=2)
 
 
 if __name__ == "__main__":
