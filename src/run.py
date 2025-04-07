@@ -582,6 +582,11 @@ def main():
                 logger.error(f"[{idx:03d}] {type(e).__name__}: {str(e)} - setting to 0")
                 prediction_outputs[str(idx)] = 0
 
+            # save prediction outputs to file every 100 samples
+            if _idx % 100 == 0 and _idx != 0:
+                with open(os.path.join(args.output_path, f"predictions_temp.json"), "w") as f:
+                    json.dump(prediction_outputs, f, indent=2)
+
         with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
             json.dump(prediction_outputs, f, indent=2)
 
