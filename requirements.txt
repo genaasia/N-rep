@@ -1,29 +1,23 @@
 # Core dependencies
 numpy
-pandas
-sqlalchemy
-PyMySQL
-psycopg2-binary
 loguru
 pyyaml
 python-dotenv
 tenacity
 func_timeout
-sentence-transformers
-sqlglot
-sql_metadata
 
 # AI/ML dependencies
 openai
 cohere
 boto3
 google-generativeai
-weaviate-client
 
 # Text2SQL specific
 sqlparse
 sql-metadata
-spacy
+sqlglot
+sql_metadata
+spacy==3.8.3
 scikit-learn
 tqdm
 

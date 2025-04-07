@@ -114,3 +114,14 @@ a `token_counts.json` file is also saved, with information about token usage.
 we use the BIRD train data as few-shot context. we have included pre-processed data in this repo, but you may examine the code and execute it if needed:
 
 ***todo: @denizay***
+
+### Evaluation
+
+we implemented an execution match test script for validating our results:
+
+```
+python evaluate.py \
+--test-database-path /data/sql_datasets/bird/dev_20240627/dev_databases \
+--test-json-path /data/sql_datasets/bird/dev_20240627/dev.json \
+--predictions-path ../results-dev/predictions.json
+```

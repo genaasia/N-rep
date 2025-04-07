@@ -514,7 +514,7 @@ def main():
 
     # check for debug mode
     if args.debug:
-        logger.warning("!!!!! DEBUG - Running on data subset !!!!!")
+        logger.warning(f"!!!!! DEBUG - Running on {args.debug} data subset !!!!!")
         test_data = test_data[: args.debug]
     else:
         logger.remove()
