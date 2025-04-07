@@ -1,11 +1,16 @@
 import argparse
 import json
 import os
+import sys
+import warnings
 
+from collections import defaultdict
+from multiprocessing.pool import ThreadPool
 from typing import Literal
 
 import numpy as np
 import tqdm
+import yaml
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -98,7 +103,7 @@ def run_schema_linking(
         column_description = schema_manager.get_filtered_schema(db_id, full_linking, schema_format)
         table_description = schema_manager.get_filtered_schema(db_id, table_linking, schema_format)
     except Exception as e:
-        logger.error(f"Error parsing schema linking prediction, returning all: {str(e)}")
+        logger.warning(f"Error parsing schema linking prediction, returning all: {str(e)}")
         full_linking = None
         table_linking = None
         column_description = schema_description
@@ -115,6 +120,67 @@ def run_schema_linking(
     }
 
     return outputs
+
+
+def run_candidate_schema_linking(
+    sample: dict,
+    candidate_configs: list[dict],
+    schema_manager: SchemaManager,
+) -> defaultdict:
+    """run schema linking for all candidate configs
+
+    Args:
+        sample: one sample from the test set json
+        candidate_configs: list of candidate configs
+        schema_manager: the schema manager
+    Returns:
+        schema_linking_outputs: defaultdict of schema linking outputs (model > format > outputs)
+    """
+    jobs: list[dict] = []
+    job_configs = []
+    schema_linking_outputs = defaultdict(lambda: defaultdict(dict))
+    for candidate_config in candidate_configs:
+        schema_format = candidate_config["schema_format"]
+        schema_linking_generator_name = candidate_config["generator"]
+        schema_linking_model = candidate_config["model"]
+        config = (schema_linking_model, schema_format)
+        # only do unique model & format combinations, as it does both table & column
+        if config not in job_configs:
+            if schema_linking_generator_name == "azure":
+                schema_linking_generator = AzureGenerator(
+                    model=schema_linking_model,
+                    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                    azure_endpoint=os.getenv("AZURE_OPENAI_API_ENDPOINT"),
+                    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                )
+            elif schema_linking_generator_name == "gcp":
+                schema_linking_generator = GCPGenerator(
+                    model=schema_linking_model,
+                    api_key=os.getenv("GCP_KEY"),
+                )
+            else:
+                raise ValueError(f"Invalid generator: {schema_linking_generator_name}")
+            job_configs.append(config)
+            jobs.append(
+                {
+                    "generator": schema_linking_generator,
+                    "schema_manager": schema_manager,
+                    "sample": sample,
+                    "schema_format": schema_format,
+                }
+            )
+
+    def run_schema_linking_wrapper(job_dict):
+        return run_schema_linking(**job_dict)
+
+    with ThreadPool(len(jobs)) as pool:
+        schema_linking_predictions = list(pool.imap(run_schema_linking_wrapper, jobs))
+
+    for idx in range(len(job_configs)):
+        model, fmt = job_configs[idx]
+        schema_linking_outputs[model][fmt] = schema_linking_predictions[idx]
+
+    return schema_linking_outputs
 
 
 def run_fewshot_retrieval(
@@ -149,7 +215,7 @@ def run_sql_generation(
     schema_linking_outputs: dict,
     schema_format: str,
     schema_filtering: Literal["none", "table", "column"],
-):
+) -> str:
     """run the sql generation task"""
     # format messages
     few_shot_examples: list[dict] = [result for result in few_shot_results if schema_format in result["data"]]
@@ -179,14 +245,50 @@ def run_sql_generation(
     return sql_prediction
 
 
+def run_candidate_sql_generation(
+    sample: dict,
+    generator: BaseGenerator,
+    candidate_configs: list[dict],
+    schema_linking_outputs: defaultdict,
+    few_shot_results: list[dict],
+) -> list[str]:
+
+    # built args
+    gen_args: list[dict] = []
+    for candidate_config in candidate_configs:
+        model = candidate_config["model"]
+        schema_format = candidate_config["schema_format"]
+        schema_filtering = candidate_config["schema_filtering"]
+        schema_linking_output = schema_linking_outputs[model][schema_format]
+
+        gen_args.append(
+            {
+                "generator": generator,
+                "sample": sample,
+                "few_shot_results": few_shot_results,
+                "schema_linking_outputs": schema_linking_output,
+                "schema_format": schema_format,
+                "schema_filtering": schema_filtering,
+            }
+        )
+
+    def run_sql_generation_wrapper(job_dict):
+        return run_sql_generation(**job_dict)
+
+    with ThreadPool(len(gen_args)) as pool:
+        candidate_sqls: list[str] = list(pool.imap(run_sql_generation_wrapper, gen_args))
+
+    return candidate_sqls
+
+
 def run_candidate_selection(
-        dataset: BaseDataset, 
-        schema_manager: SchemaManager, 
-        generator: BaseGenerator,
-        sample: dict, 
-        candidate_sqls: list[str],
-        chase: bool = False,
-    ) -> str:
+    dataset: BaseDataset,
+    schema_manager: SchemaManager,
+    generator: BaseGenerator,
+    sample: dict,
+    candidate_sqls: list[str],
+    chase: bool = False,
+) -> str:
     """run the candidate selection task"""
     # for each sample, prepare the execution result dict
     database: str = sample["db_id"]
@@ -199,11 +301,13 @@ def run_candidate_selection(
             execution_results = []
             is_valid = False
 
-        sample_dicts.append({
-            "sql": sql_query,
-            "valid": is_valid,
-            "results": execution_results,
-        })
+        sample_dicts.append(
+            {
+                "sql": sql_query,
+                "valid": is_valid,
+                "results": execution_results,
+            }
+        )
     # run selection
     best_sql = select_best_candidate(
         predictions=sample_dicts,
@@ -220,21 +324,59 @@ def run_candidate_selection(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--test-database-path", type=str, required=True, help="path to the test databases base directory"
+        "--test-database-path",
+        type=str,
+        required=True,
+        help="path to the test databases base directory",
     )
-    parser.add_argument("--test-json-path", type=str, required=True, help="path to the test.json file")
-    parser.add_argument("--test-tables-json-path", type=str, required=True, help="path to the test_tables.json file")
+    parser.add_argument(
+        "--test-json-path",
+        type=str,
+        required=True,
+        help="path to the test.json file",
+    )
+    parser.add_argument(
+        "--test-tables-json-path",
+        type=str,
+        required=True,
+        help="path to the test_tables.json file",
+    )
+    parser.add_argument(
+        "--embeddings-path",
+        type=str,
+        required=True,
+        help="path to preprocessed numpy embeddings file",
+    )
+    parser.add_argument(
+        "--embeddings-data-path",
+        type=str,
+        required=True,
+        help="path to preprocessed json embeddings data file",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        required=True,
+        default="../outputs",
+        help="target output path",
+    )
+    parser.add_argument(
+        "--candidate-configs-path",
+        type=str,
+        default="./bird_data/consistency_candidate_configs.yaml",
+        help="path to the candidate configs file",
+    )
     parser.add_argument(
         "--column-meaning-json-path",
         type=str,
         default=None,
         help="path to the column_meaning.json file, leave blank if not used",
     )
-    parser.add_argument("--embeddings-path", type=str, required=True, help="path to preprocessed numpy embeddings file")
     parser.add_argument(
-        "--embeddings-data-path", type=str, required=True, help="path to preprocessed json embeddings data file"
+        "--debug",
+        action="store_true",
+        help="run in debug mode (do small subset of data)",
     )
-    parser.add_argument("--output-path", type=str, required=True, default="../outputs", help="target output path")
     args = parser.parse_args()
 
     load_dotenv()
@@ -262,6 +404,7 @@ def main():
         args.test_tables_json_path,
         args.embeddings_path,
         args.embeddings_data_path,
+        args.candidate_configs_path,
     ]:
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Required file not found: {path}")
@@ -289,8 +432,25 @@ def main():
     else:
         logger.info(f"Output directory found, existing outputs will be overwritten: {args.output_path}")
 
-    logger.info("Loading test data...")
+    # load candidate configs
+    top_k = 3  # 3 by default, can override in candidate configs
+    with open(args.candidate_configs_path, "r") as f:
+        candidate_config_data: list[dict] = yaml.safe_load(f)
+        if "configs" not in candidate_config_data:
+            raise ValueError("candidate_config_data must contain a 'configs' key")
+        if "top_k" in candidate_config_data:
+            top_k = candidate_config_data["top_k"]
+        candidate_configs: list[dict] = candidate_config_data["configs"]
+
+    # verify candidate config keys:
+    for config in candidate_configs:
+        assert "schema_format" in config
+        assert "schema_filtering" in config
+        assert "generator" in config
+        assert "model" in config
+
     # load test.json
+    logger.info("Loading test data...")
     with open(args.test_json_path, "r") as f:
         test_data: list[dict] = json.load(f)
 
@@ -319,7 +479,7 @@ def main():
         api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
     )
     p = azure_generator.generate(test_messages, temperature=0.0)
-    logger.info(f"Azure generator test response: {p}")
+    logger.info(f"Azure generator test response: '{p}'")
 
     logger.info("Creating & testing Gemini generator...")
     gcp_generator = GCPGenerator(
@@ -328,7 +488,7 @@ def main():
     )
 
     p = gcp_generator.generate(test_messages, temperature=0.0)
-    logger.info(f"Gemini generator test response: {p}")
+    logger.info(f"Gemini generator test response: '{p}'")
 
     # preprocessing
     dataset, schema_manager = prepare_dataset_information(args.test_database_path, args.test_tables_json_path)
@@ -336,50 +496,64 @@ def main():
 
     logger.info("Preprocessing complete, starting inference...")
 
-    # example single inference
-    logger.warning("!!!!! Running single test !!!!!")
+    # check for debug mode
+    if args.debug:
+        logger.warning("!!!!! DEBUG - Running on data subset !!!!!")
+        test_data = test_data[:10]
+    else:
+        logger.remove()
+        logger.add(sys.stderr, level="INFO")
 
-    sample = test_data[0]
-    top_k = 3
+    prediction_outputs: dict = {}
 
-    candidate_sqls: list[str] = []
-    for schema_format, schema_filtering_mode in [
-        ("sql", "none"),
-        ("m_schema", "column"),
-        ("mac_schema", "table"),
-    ]:
-        logger.info(f"[test] doing schema linking with '{schema_format}' schema format and '{schema_filtering_mode}' schema filtering")
-        schema_linking_outputs = run_schema_linking(gcp_generator, schema_manager, sample, schema_format)
-        logger.info(
-            f"[test] schema linking output: type {type(schema_linking_outputs).__name__} with keys {schema_linking_outputs.keys()}"
+    with warnings.catch_warnings():
+        # ignore the boto3 deprecation warning
+        warnings.filterwarnings(
+            "ignore", message="datetime.datetime.utcnow.*is deprecated", category=DeprecationWarning
         )
-        logger.info("[test] doing schema linking")
-        few_shot_results = run_fewshot_retrieval(embedder=embedder, retriever=retriever, sample=sample, top_k=top_k)
-        logger.info(
-            f"[test] fewshot retrieval output: type {type(few_shot_results).__name__} with keys {few_shot_results[0].keys()}"
-        )
-        logger.info(f"[test] doing sql generation with gcp generator, '{schema_filtering_mode}' schema filtering")
-        sql = run_sql_generation(
-            generator=gcp_generator,
-            sample=sample,
-            few_shot_results=few_shot_results,
-            schema_linking_outputs=schema_linking_outputs,
-            schema_format=schema_format,
-            schema_filtering=schema_filtering_mode,
-        )
-        candidate_sqls.append(sql)
-        logger.info(f"[test] predicted sql candidate: {sql}")
 
-    best_sql = run_candidate_selection(
-        dataset=dataset,
-        schema_manager=schema_manager,
-        sample=sample,
-        candidate_sqls=candidate_sqls,
-        generator=gcp_generator,
-        chase=True,
-    )
-    logger.info(f"[test] best sql: {best_sql}")
-        
+        for idx, sample in enumerate(tqdm.tqdm(test_data)):
+
+            # run schema linking in parallel, one for each
+            logger.debug(f"[{idx:03d}] doing multithreaded schema linking...")
+            schema_linking_outputs: defaultdict = run_candidate_schema_linking(
+                sample,
+                candidate_configs,
+                schema_manager,
+            )
+
+            # single call for all candidates
+            logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
+            few_shot_results: list[dict] = run_fewshot_retrieval(
+                embedder=embedder,
+                retriever=retriever,
+                sample=sample,
+                top_k=top_k,
+            )
+
+            # do candidate selection in parallel
+            logger.debug(f"[{idx:03d}] doing candidate sql generation...")
+            candidate_sqls: list[str] = run_candidate_sql_generation(
+                sample=sample,
+                generator=gcp_generator,
+                candidate_configs=candidate_configs,
+                schema_linking_outputs=schema_linking_outputs,
+                few_shot_results=few_shot_results,
+            )
+            # single call - runs parallel under the hood
+            best_sql: str = run_candidate_selection(
+                dataset=dataset,
+                schema_manager=schema_manager,
+                sample=sample,
+                candidate_sqls=candidate_sqls,
+                generator=gcp_generator,
+                chase=True,
+            )
+            logger.debug(f"[{idx:03d}] best sql: {best_sql}")
+            prediction_outputs[str(idx)] = best_sql
+
+        with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
+            json.dump(prediction_outputs, f, indent=2)
 
 
 if __name__ == "__main__":
