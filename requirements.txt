@@ -21,7 +21,6 @@ google-generativeai
 weaviate-client
 
 # Text2SQL specific
-txt2sql
 sqlparse
 sql-metadata
 spacy
