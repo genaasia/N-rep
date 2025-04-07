@@ -1,3 +1,6 @@
+import json
+import re
+
 import sqlparse
 
 from sql_metadata import Parser
@@ -44,3 +47,23 @@ def extract_sql_query(text):
 
     # Join the remaining lines back together
     return "\n".join(sql_lines)
+
+
+def extract_last_json_block(text: str) -> str:
+    """extract code block contents"""
+    pattern = r"```(?:json|sql|python|\w*)\n?(.*?)\n?```"
+    matches = re.finditer(pattern, text, re.DOTALL)
+    results = []
+    for match in matches:
+        content = match.group(1).strip()
+        results.append(content)
+    if len(results) == 0:
+        return text
+    return results[-1]
+
+
+def parse_json_from_prediction(prediction: str) -> dict:
+    """extract json prediction from"""
+    json_body = extract_last_json_block(prediction)
+    json_data = json.loads(json_body)
+    return json_data

@@ -22,7 +22,8 @@ def get_sqlite_database_file(base_dir: str, database: str) -> str:
 def query_sqlite_database(base_dir: str, database: str, sql_query: str) -> list[dict]:
     """query sqlite database and return results"""
     db_path = get_sqlite_database_file(base_dir=base_dir, database=database)
-    connection = sqlite3.connect(db_path)
+    uri = "file:" + db_path + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True)
     connection.row_factory = sqlite3.Row
     cursor = connection.cursor()
     result = cursor.execute(sql_query)
@@ -65,7 +66,7 @@ def get_sqlite_schema(base_dir: str, database: str) -> dict[str, Any]:
                 break
 
     for table in tables:
-        if table[0] == "sqlite_sequence":
+        if table[0] in ["sqlite_sequence", "sqlite_stat1", "sqlite_stat4"]:
             continue
         table_name = table[0]
         schema["tables"][table_name] = {"columns": {}, "keys": {}, "foreign_keys": {}}

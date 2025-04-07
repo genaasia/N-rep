@@ -11,13 +11,19 @@ from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from text2sql.engine.clients import get_azure_client, get_bedrock_client, get_openai_client, get_togetherai_client
 from text2sql.engine.generation.converters import convert_messages_to_bedrock_format
-
+from text2sql.utils import TokenCounter
 
 def identity(x: str) -> str:
     return x
 
 
-class AzureGenerator:
+class BaseGenerator(ABC):
+    @abstractmethod
+    def generate(self, messages: list[dict], **kwargs) -> str:
+        pass
+
+
+class AzureGenerator(BaseGenerator):
 
     def __init__(
         self,
@@ -26,6 +32,7 @@ class AzureGenerator:
         azure_endpoint: str,
         model: str,
         post_func: Callable[[str], str] = identity,
+        counter: TokenCounter | None = None,
         **kwargs,
     ):
         """generate text using Azure OpenAI API
@@ -36,6 +43,7 @@ class AzureGenerator:
             azure_endpoint (str): azure endpoint url
             model (str): azure model deployment name
             kwargs: additional azure client specific arguments
+            counter: callable to count tokens
 
         """
         self.api_key = api_key
@@ -46,15 +54,21 @@ class AzureGenerator:
         self.client: AzureOpenAI = get_azure_client(
             api_key=self.api_key, api_version=self.api_version, azure_endpoint=self.azure_endpoint, **kwargs
         )
+        self.counter = counter
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
         """embed one batch of texts with azure"""
         chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
+        if self.counter:
+            self.counter.add_token_counts(
+                chat_completion.usage.prompt_tokens,
+                chat_completion.usage.completion_tokens,
+            )
         return self.post_func(chat_completion.choices[0].message.content)
 
 
-class BedrockGenerator:
+class BedrockGenerator(BaseGenerator):
     def __init__(
         self,
         region_name: str,
@@ -93,13 +107,14 @@ class BedrockGenerator:
         return self.post_func(response["output"]["message"]["content"][-1]["text"])
 
 
-class GCPGenerator:
+class GCPGenerator(BaseGenerator):
 
     def __init__(
         self,
         api_key: str,
         model: str,
         post_func: Callable[[str], str] = identity,
+        counter: TokenCounter | None = None,
     ):
         """generate text using GCP API
 
@@ -107,11 +122,12 @@ class GCPGenerator:
             api_key (str): gcp api key
             model (str): gemini model name
             kwargs: additional gemini specific arguments
+            counter: callable to count tokens
 
         """
         self.model = model
         self.post_func = post_func
-
+        self.counter = counter
         genai.configure(api_key=api_key)
 
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
@@ -132,10 +148,15 @@ class GCPGenerator:
         chat = client.start_chat(history=history)
 
         result = chat.send_message(messages[-1]["content"])
+        if self.counter:
+            self.counter.add_token_counts(
+                result.usage_metadata.prompt_token_count,
+                result.usage_metadata.candidates_token_count,
+            )
         return self.post_func(result.text)
 
 
-class OpenAIGenerator:
+class OpenAIGenerator(BaseGenerator):
 
     def __init__(
         self,
@@ -166,7 +187,7 @@ class OpenAIGenerator:
         return self.post_func(chat_completion.choices[0].message.content)
 
 
-class TogetherAIGenerator:
+class TogetherAIGenerator(BaseGenerator):
 
     def __init__(
         self,

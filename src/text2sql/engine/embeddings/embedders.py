@@ -43,7 +43,7 @@ class BaseEmbedder(ABC):
 
     def embed(self, data: str | list[str], verbose: bool = False) -> list[float] | list[list[float]]:
         """lazy function to embed either a single text or a list of texts"""
-        if type(data) == str:
+        if isinstance(data, str):
             return self.embed_text(data)
         else:
             return self.embed_list(data, verbose=verbose)
