@@ -5,7 +5,7 @@ from text2sql.data.query_parser import get_table_mapping
 from text2sql.data.schema_filtering import parse_m_schema
 from text2sql.data.schema_manager import SchemaManager
 from text2sql.engine.generation.generators import BaseGenerator
-from txt2sql.metrics import execution_match
+from text2sql.evaluation.metrics import execution_match
 
 # System and user prompts for query comparison
 SYSTEM_PROMPT = """You are an expert in SQLite query analysis.
@@ -58,9 +58,7 @@ def merge_table_mapping(correct_table_mapping: Dict, wrong_table_mapping: Dict) 
         if table not in wrong_table_mapping:
             wrong_table_mapping[table] = correct_table_mapping[table]
         else:
-            wrong_table_mapping[table] = list(
-                set(wrong_table_mapping[table]) | set(correct_table_mapping[table])
-            )
+            wrong_table_mapping[table] = list(set(wrong_table_mapping[table]) | set(correct_table_mapping[table]))
     return wrong_table_mapping
 
 
@@ -168,12 +166,12 @@ def process_prediction_pair(
         return (idx, 1)
 
     # Get table mappings for both predictions
-    outer_table_mapping = get_table_mapping(
-        schema_manager.get_schema_mapping(db_id), predictions[idx]["sql"]
-    )["table_map"]
-    inner_table_mapping = get_table_mapping(
-        schema_manager.get_schema_mapping(db_id), predictions[inner_idx]["sql"]
-    )["table_map"]
+    outer_table_mapping = get_table_mapping(schema_manager.get_schema_mapping(db_id), predictions[idx]["sql"])[
+        "table_map"
+    ]
+    inner_table_mapping = get_table_mapping(schema_manager.get_schema_mapping(db_id), predictions[inner_idx]["sql"])[
+        "table_map"
+    ]
 
     # Merge table mappings and parse schema
     table_mapping = merge_table_mapping(outer_table_mapping, inner_table_mapping)
@@ -194,9 +192,7 @@ def process_prediction_pair(
         },
     )
     # Add the instruction to return only A or B
-    messages[-1][
-        "content"
-    ] += "\nReturn only the letter A or B, do not output any other text"
+    messages[-1]["content"] += "\nReturn only the letter A or B, do not output any other text"
 
     # Use GCPGenerator to get the vote
     result = generator.generate(messages, temperature=0)
@@ -305,17 +301,13 @@ def select_best_candidate(
     if chase and schema_manager is None:
         raise ValueError("schema_manager is required for chase voting")
     if chase and (db_id is None or question is None or evidence is None):
-        raise ValueError(
-            "db_id, nl_en_query, and evidence are required for chase voting"
-        )
+        raise ValueError("db_id, nl_en_query, and evidence are required for chase voting")
     if chase and generator is None:
         raise ValueError("generator is required for chase voting")
 
     predicted_valids = [item for item in predictions if item["valid"]]
     prediction_votes = get_votes(predictions)
-    max_vote_sql, values = max(
-        prediction_votes.items(), key=lambda x: x[1]["vote_count"]
-    )
+    max_vote_sql, values = max(prediction_votes.items(), key=lambda x: x[1]["vote_count"])
 
     if not chase:
         return max_vote_sql
@@ -325,31 +317,17 @@ def select_best_candidate(
     # Determine if chase voting is needed
     should_chase = (
         max_vote == 1
-        or (
-            max_vote == 2
-            and sum(
-                [True for val in prediction_votes.values() if val["vote_count"] == 2]
-            )
-            > 1
-        )
-        or (
-            max_vote == 3
-            and sum(
-                [True for val in prediction_votes.values() if val["vote_count"] == 2]
-            )
-            >= 1
-        )
+        or (max_vote == 2 and sum([True for val in prediction_votes.values() if val["vote_count"] == 2]) > 1)
+        or (max_vote == 3 and sum([True for val in prediction_votes.values() if val["vote_count"] == 2]) >= 1)
     )
 
     if should_chase:
-        chase_votes = chase_voting(
-            predicted_valids, schema_manager, db_id, question, evidence, generator
-        )
-        
+        chase_votes = chase_voting(predicted_valids, schema_manager, db_id, question, evidence, generator)
+
         # Handle empty chase_votes
         if not chase_votes:
             return max_vote_sql
-            
+
         chase_idx, _chase_max_vote = max(chase_votes.items(), key=lambda x: x[1])
         chase_sql = predicted_valids[chase_idx]["sql"]
 

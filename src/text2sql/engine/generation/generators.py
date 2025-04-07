@@ -1,17 +1,14 @@
-import json
-
 from abc import ABC, abstractmethod
 from typing import Callable
-
-import tqdm
 
 from openai import AzureOpenAI, OpenAI
 import google.generativeai as genai
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
-from text2sql.engine.clients import get_azure_client, get_bedrock_client, get_openai_client, get_togetherai_client
+from text2sql.engine.clients import get_azure_client, get_bedrock_client, get_openai_client
 from text2sql.engine.generation.converters import convert_messages_to_bedrock_format
 from text2sql.utils import TokenCounter
+
 
 def identity(x: str) -> str:
     return x
@@ -183,33 +180,5 @@ class OpenAIGenerator(BaseGenerator):
     @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
         """embed one batch of texts with OpenAI client"""
-        chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
-        return self.post_func(chat_completion.choices[0].message.content)
-
-
-class TogetherAIGenerator(BaseGenerator):
-
-    def __init__(
-        self,
-        api_key: str,
-        model: str,
-        post_func: Callable[[str], str] = identity,
-        **kwargs,
-    ):
-        """generate text with together.ai
-
-        Args:
-            api_key (str): api key for together.ai
-            model (str): model identifier
-            kwargs: additional openai client specific arguments
-
-        """
-        self.model = model
-        self.post_func = post_func
-        self.client = get_togetherai_client(api_key=api_key, **kwargs)
-
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
-    def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
-        """embed one batch of texts with Together AI client"""
         chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
         return self.post_func(chat_completion.choices[0].message.content)

@@ -1,6 +1,4 @@
 import boto3
-import cohere
-import weaviate
 
 from loguru import logger
 from openai import AsyncAzureOpenAI, AzureOpenAI, OpenAI
@@ -35,16 +33,6 @@ def get_bedrock_client(region_name: str, service_name: str = "bedrock-runtime") 
     )
 
 
-def get_cohere_client(api_key: str) -> cohere.Client:
-    """get cohere client"""
-    return cohere.Client(api_key=api_key)
-
-
-def get_async_cohere_client(api_key: str) -> cohere.AsyncClient:
-    """get async cohere client"""
-    return cohere.AsyncClient(api_key=api_key)
-
-
 def get_openai_client(api_key: str, base_url: str | None = None) -> OpenAI:
     """get openai client"""
     # If base_url is None the OpenAI library checks OPENAI_BASE_URL env variable
@@ -54,25 +42,4 @@ def get_openai_client(api_key: str, base_url: str | None = None) -> OpenAI:
         api_key=api_key,
         base_url=base_url,
     )
-    return client
-
-
-def get_togetherai_client(api_key: str) -> OpenAI:
-    """get azure client"""
-    from together import Together
-
-    client = Together(api_key=api_key)
-    return client
-
-
-def get_weaviate_client(host: str, port: int, grpc_port: int) -> weaviate.WeaviateClient:
-    """get weaviate client"""
-    client = weaviate.connect_to_local(
-        host=host,
-        port=port,
-        grpc_port=grpc_port,
-    )
-    if not client.is_ready():
-        logger.error("weaviate client not ready")
-        raise ConnectionError("weaviate client not ready")
     return client
