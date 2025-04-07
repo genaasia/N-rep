@@ -82,7 +82,10 @@ def main():
     # Calculate and print average score
     if len(results) > 0:
         average_score = sum(results) / len(results)
-        print(f"\nExecution Match Score: {average_score:.4f} ({sum(results)}/{len(results)})")
+        print()
+        print(f"Valid Percentage : {valid_count / len(results):.4f} ({valid_count}/{len(results)})")
+        print(f"Execution Match  : {average_score:.4f} ({sum(results)}/{len(results)})")
+
     else:
         print("No valid samples processed")
 
