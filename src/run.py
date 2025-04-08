@@ -478,7 +478,7 @@ def main():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=3,
+        default=8,
         help="number of workers to use for inference, default is 3",
     )
     args = parser.parse_args()
