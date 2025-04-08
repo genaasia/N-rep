@@ -168,6 +168,7 @@ class SchemaLinkingFewShotFormatter:
         schema_description: str,
         question: str,
         evidence: str,
+        gemini: bool = False,
     ) -> list[dict]:
         messages = [{"role": "system", "content": self.system_prompt}]
 
@@ -176,6 +177,8 @@ class SchemaLinkingFewShotFormatter:
             question=question,
             evidence=evidence,
         )
+        if gemini:
+            query_message += " Use double quotes for keys and values in the JSON output."
 
         messages.append({"role": "user", "content": query_message})
         return messages
