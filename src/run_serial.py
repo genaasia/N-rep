@@ -5,7 +5,6 @@ import sys
 import warnings
 
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.pool import ThreadPool
 from typing import Literal
 
@@ -188,19 +187,22 @@ def run_candidate_schema_linking(
     return schema_linking_outputs
 
 
-def run_embedding(
-    sample: dict,
+def run_fewshot_retrieval(
     embedder: BaseEmbedder,
+    retriever: LocalRetriever,
+    sample: dict,
+    top_k: int = 3,
     do_mask: bool = True,
 ) -> list[dict]:
-    """run the embedding task
+    """run the fewshow retrieval task
 
     Args:
-        sample: one sample from the test set json
         embedder: embedder
-        do_mask: whether to mask entities in the question
-    Returns:
-        embedding: the embedding of the question
+        retriever: retriever pre-loaded with vectors and data
+        sample: one sample from the test set json
+        top_k: number of top k results to return
+    Returns:replace_entities_with_tokens
+        results: list of dict with the top k results (with keys id, distance, data)
     """
     question = sample["question"]
     if do_mask:
@@ -209,25 +211,12 @@ def run_embedding(
         embedding = embedder.embed(question)
     except Exception as e:
         logger.error(f"failed to embed question: {type(e).__name__}: {str(e)}")
-        raise e
-    return embedding
-
-
-def run_fewshot_retrieval(
-    embedding: list[float],
-    retriever: LocalRetriever,
-    top_k: int = 3,
-) -> list[dict]:
-    """run the fewshot retrieval task
-
-    Args:
-        embedding: the embedding of the question
-        retriever: retriever pre-loaded with vectors and data
-        top_k: number of top k results to return
-    Returns:
-        results: list of dict with the top k results (with keys id, distance, data)
-    """
-    return retriever.query(embedding, top_k=top_k)
+        embedding = None
+    if embedding is not None:
+        results = retriever.query(embedding, top_k=top_k)
+    else:
+        results = []
+    return results
 
 
 def run_sql_generation(
@@ -356,52 +345,100 @@ def run_one_inference(
         embedder: BaseEmbedder, 
         retriever: LocalRetriever, 
         top_k: int,
+        output_path: str,
     ) -> dict:
     step = "initialization"
     try:
+        # Create output directories if they don't exist
+        schema_linking_output_dir = os.path.join(output_path, "1_schema_linking")
+        fewshot_retrieval_output_dir = os.path.join(output_path, "3_fewshot_retrieval")
+        sql_generation_output_dir = os.path.join(output_path, "4_sql_generation")
+        candidate_selection_output_dir = os.path.join(output_path, "5_candidate_selection")
 
-        # run schema linking in parallel, one for each schema format and model
-        logger.debug(f"[{idx:03d}] doing schema linking...")
-        step = "schema linking"
-        schema_linking_outputs: defaultdict = run_candidate_schema_linking(
-            sample,
-            candidate_configs,
-            schema_manager,
-            azure_linker_token_counter,
-            gcp_linker_token_counter,
-        )
+        # Check for cached schema linking results
+        schema_linking_file = os.path.join(schema_linking_output_dir, f"{idx:04d}.json")
+        if os.path.exists(schema_linking_file):
+            logger.debug(f"[{idx:03d}] loading cached schema linking results...")
+            with open(schema_linking_file, "r") as f:
+                schema_linking_outputs = json.load(f)
+        else:
+            # run schema linking in parallel, one for each schema format and model
+            logger.debug(f"[{idx:03d}] doing schema linking...")
+            step = "schema linking"
+            schema_linking_outputs = run_candidate_schema_linking(
+                sample,
+                candidate_configs,
+                schema_manager,
+                azure_linker_token_counter,
+                gcp_linker_token_counter,
+            )
+            # Save schema linking results
+            with open(schema_linking_file, "w") as f:
+                json.dump(schema_linking_outputs, f, indent=2)
 
-        # get few-shot retrieval results
-        logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
-        step = "few shot retrieval"
-        few_shot_results: list[dict] = run_fewshot_retrieval(
-            embedder=embedder,
-            retriever=retriever,
-            sample=sample,
-            top_k=top_k,
-        )
+        # Check for cached few-shot retrieval results
+        fewshot_retrieval_file = os.path.join(fewshot_retrieval_output_dir, f"{idx:04d}.json")
+        if os.path.exists(fewshot_retrieval_file):
+            logger.debug(f"[{idx:03d}] loading cached few-shot retrieval results...")
+            with open(fewshot_retrieval_file, "r") as f:
+                few_shot_results = json.load(f)
+        else:
+            # get few-shot retrieval results
+            logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
+            step = "few shot retrieval"
+            few_shot_results = run_fewshot_retrieval(
+                embedder=embedder,
+                retriever=retriever,
+                sample=sample,
+                top_k=top_k,
+            )
+            # Save few-shot retrieval results
+            with open(fewshot_retrieval_file, "w") as f:
+                json.dump(few_shot_results, f, indent=2)
 
-        # run SQL generation in parallel, one for each candidate config
-        logger.debug(f"[{idx:03d}] doing candidate sql generation...")
-        step = "candidate generation"
-        candidate_sqls: list[str] = run_candidate_sql_generation(
-            sample=sample,
-            generator=gcp_generator_candidate,
-            candidate_configs=candidate_configs,
-            schema_linking_outputs=schema_linking_outputs,
-            few_shot_results=few_shot_results,
-        )
-        # do candidate selection in single call - runs parallel under the hood
-        logger.debug(f"[{idx:03d}] doing candidate selection...")
-        step = "candidate selection"
-        best_sql: str = run_candidate_selection(
-            dataset=dataset,
-            schema_manager=schema_manager,
-            sample=sample,
-            candidate_sqls=candidate_sqls,
-            generator=gcp_generator_selection,
-            chase=True,
-        )
+        # Check for cached SQL generation results
+        sql_generation_file = os.path.join(sql_generation_output_dir, f"{idx:04d}.json")
+        if os.path.exists(sql_generation_file):
+            logger.debug(f"[{idx:03d}] loading cached SQL generation results...")
+            with open(sql_generation_file, "r") as f:
+                candidate_sqls = json.load(f)
+        else:
+            # run SQL generation in parallel, one for each candidate config
+            logger.debug(f"[{idx:03d}] doing candidate sql generation...")
+            step = "candidate generation"
+            candidate_sqls = run_candidate_sql_generation(
+                sample=sample,
+                generator=gcp_generator_candidate,
+                candidate_configs=candidate_configs,
+                schema_linking_outputs=schema_linking_outputs,
+                few_shot_results=few_shot_results,
+            )
+            # Save SQL generation results
+            with open(sql_generation_file, "w") as f:
+                json.dump(candidate_sqls, f, indent=2)
+
+        # Check for cached candidate selection results
+        candidate_selection_file = os.path.join(candidate_selection_output_dir, f"{idx:04d}.txt")
+        if os.path.exists(candidate_selection_file):
+            logger.debug(f"[{idx:03d}] loading cached candidate selection results...")
+            with open(candidate_selection_file, "r") as f:
+                best_sql = f.read()
+        else:
+            # do candidate selection in single call - runs parallel under the hood
+            logger.debug(f"[{idx:03d}] doing candidate selection...")
+            step = "candidate selection"
+            best_sql = run_candidate_selection(
+                dataset=dataset,
+                schema_manager=schema_manager,
+                sample=sample,
+                candidate_sqls=candidate_sqls,
+                generator=gcp_generator_selection,
+                chase=True,
+            )
+            # Save candidate selection results
+            with open(candidate_selection_file, "w") as f:
+                f.write(best_sql)
+                
         logger.debug(f"[{idx:03d}] best sql: {best_sql}") 
     except Exception as e:
         # like BIRD example dev data, add 0 if error
@@ -441,13 +478,13 @@ def main():
     parser.add_argument(
         "--embeddings-path",
         type=str,
-        default="./bird_data/valid_multi_table_queries_080425_embeddings.npy",
+        default="./bird_data/valid_multi_table_queries_embeddings.npy",
         help="path to preprocessed numpy embeddings file",
     )
     parser.add_argument(
         "--embeddings-data-path",
         type=str,
-        default="./bird_data/valid_multi_table_queries_080425.json",
+        default="./bird_data/valid_multi_table_queries.json",
         help="path to preprocessed json embeddings data file",
     )
     parser.add_argument(
@@ -478,8 +515,8 @@ def main():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=3,
-        help="number of workers to use for inference, default is 3",
+        default=5,
+        help="number of workers to use for inference, default is 5",
     )
     args = parser.parse_args()
 
@@ -579,7 +616,6 @@ def main():
         region_name=os.getenv("AWS_REGION_NAME"),
         input_type=os.getenv("AWS_INPUT_TYPE"),
         counter=cohere_character_counter,
-        sleep_ms=10,
     )
 
     logger.info("Creating & testing azure generator...")
@@ -614,7 +650,15 @@ def main():
     retriever = prepare_fewshot_retriever(args.embeddings_path, args.embeddings_data_path)
 
     logger.info("Preprocessing complete, starting inference...")
-
+    schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
+    fewshot_retrieval_output_dir = os.path.join(args.output_path, "3_fewshot_retrieval")
+    sql_generation_output_dir = os.path.join(args.output_path, "4_sql_generation")
+    candidate_selection_output_dir = os.path.join(args.output_path, "5_candidate_selection")
+    os.makedirs(schema_linking_output_dir, exist_ok=True)
+    os.makedirs(fewshot_retrieval_output_dir, exist_ok=True)
+    os.makedirs(sql_generation_output_dir, exist_ok=True)
+    os.makedirs(candidate_selection_output_dir, exist_ok=True)
+    
     # check for debug mode
     if args.debug:
         logger.warning(f"!!!!! DEBUG - Running on {args.debug} data subset !!!!!")
@@ -623,169 +667,40 @@ def main():
         logger.remove()
         logger.add(sys.stderr, level="INFO")
 
-    # run schema linking
-    # create directory for schema linking outputs inside output path
-    schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
-    os.makedirs(schema_linking_output_dir, exist_ok=True)
-    # load any existing schema linking jsons
-    cached_schema_linking_results: dict = {}
-    for file in os.listdir(schema_linking_output_dir):
-        if file.endswith(".json"):
-            # get id from filename
-            index = int(file.split(".")[0])
-            with open(os.path.join(schema_linking_output_dir, file), "r") as f:
-                cached_schema_linking_results[index] = json.load(f)
-    logger.info(f"Loaded {len(cached_schema_linking_results)} cached schema linking results")
-    logger.info(f"Running schema linking for {len(test_data)-len(cached_schema_linking_results)} samples")
-    # run schema linking for each sample, with threading executor
-    schema_linking_outputs: dict = {}
-    def maybe_run_candidate_schema_linking(idx, cached_schema_linking_results, sample, candidate_configs, schema_manager, azure_linker_token_counter, gcp_linker_token_counter):
-        if idx in cached_schema_linking_results:
-            schema_linking_result = cached_schema_linking_results[idx]
-        else:
-            schema_linking_result = run_candidate_schema_linking(
-                sample, 
-                candidate_configs, 
-                schema_manager, 
-                azure_linker_token_counter, 
-                gcp_linker_token_counter,
-            )
-            with open(os.path.join(schema_linking_output_dir, f"{idx:4d}.json"), "w") as f:
-                json.dump(schema_linking_result, f, indent=2)
-        return schema_linking_result
-    
-    with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
-        futures = [executor.submit(maybe_run_candidate_schema_linking, idx, cached_schema_linking_results, sample, candidate_configs, schema_manager, azure_linker_token_counter, gcp_linker_token_counter) for idx, sample in enumerate(test_data)]
-        for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
-            schema_linking_outputs[idx] = future.result()
-    # for idx, sample in enumerate(tqdm.tqdm(test_data)):
-    #     if idx in cached_schema_linking_results:
-    #         schema_linking_result = cached_schema_linking_results[idx]
-    #     else:
-    #         schema_linking_result = run_candidate_schema_linking(
-    #             sample, 
-    #             candidate_configs, 
-    #             schema_manager, 
-    #             azure_linker_token_counter, 
-    #             gcp_linker_token_counter,
-    #         )
-    #     schema_linking_outputs[idx] = schema_linking_result
-    #     with open(os.path.join(schema_linking_output_dir, f"{idx:4d}.json"), "w") as f:
-    #         json.dump(schema_linking_result, f, indent=2)
-    del cached_schema_linking_results
-    logger.info("Schema linking complete")
+    prediction_outputs: dict = {}
+    jobs = []
+    for _idx, sample in enumerate(test_data):
+        idx = int(sample.get("question_id", _idx))
+        jobs.append({
+            "idx": idx,
+            "sample": sample,
+            "dataset": dataset,
+            "candidate_configs": candidate_configs,
+            "schema_manager": schema_manager,
+            "azure_linker_token_counter": azure_linker_token_counter,
+            "gcp_linker_token_counter": gcp_linker_token_counter,
+            "gcp_generator_candidate": gcp_generator_candidate,
+            "gcp_generator_selection": gcp_generator_selection,
+            "embedder": embedder,
+            "retriever": retriever,
+            "top_k": top_k,
+            "output_path": args.output_path,
+        })
 
-    # run embeddings
-    embedding_output_dir = os.path.join(args.output_path, "2_embeddings")
-    os.makedirs(embedding_output_dir, exist_ok=True)
-    # check for cached npy embeddings file
-    _embeddings = None
-    if os.path.isfile(os.path.join(embedding_output_dir, "embeddings.npy")):
-        _embeddings = np.load(os.path.join(embedding_output_dir, "embeddings.npy"))
-    if _embeddings is not None and len(_embeddings) == len(test_data):
-        embeddings = _embeddings.tolist()
-        logger.info(f"Loaded cached embeddings of size ({np.array(embeddings).shape})")
-    else:
-        logger.info("Generating embeddings...")
-        test_questions = [sample["question"] for sample in test_data]
-        embeddings = embedder.embed(test_questions, verbose=True)
-        np.save(os.path.join(embedding_output_dir, "embeddings.npy"), embeddings)
-    logger.info(f"Embeddings of size ({np.array(embeddings).shape}) complete")
-    
-    # run fewshot retrieval
-    fewshot_retrieval_output_dir = os.path.join(args.output_path, "3_fewshot_retrieval")
-    os.makedirs(fewshot_retrieval_output_dir, exist_ok=True)
-    cached_fewshot_retrieval_results: dict = {}
-    for file in os.listdir(fewshot_retrieval_output_dir):
-        if file.endswith(".json"):
-            index = int(file.split(".")[0])
-            with open(os.path.join(fewshot_retrieval_output_dir, file), "r") as f:
-                cached_fewshot_retrieval_results[index] = json.load(f)
-    logger.info(f"Loaded {len(cached_fewshot_retrieval_results)} cached fewshot retrieval results")
-    logger.info(f"Running fewshot retrieval for {len(test_data)-len(cached_fewshot_retrieval_results)} samples")
-    # run fewshot retrieval for each sample
-    fewshot_retrieval_results: dict = {}
-    for idx, sample in enumerate(tqdm.tqdm(test_data)):
-        if idx in cached_fewshot_retrieval_results:
-            fewshot_retrieval_result: list[dict] = cached_fewshot_retrieval_results[idx]
-        else:
-            fewshot_retrieval_result: list[dict] = run_fewshot_retrieval(embeddings[idx], retriever, top_k=top_k)
-        fewshot_retrieval_results[idx] = fewshot_retrieval_result
-        with open(os.path.join(fewshot_retrieval_output_dir, f"{idx:4d}.json"), "w") as f:
-            json.dump(fewshot_retrieval_result, f, indent=2)
-    del cached_fewshot_retrieval_results
-    logger.info("Fewshot retrieval complete")
+    with warnings.catch_warnings():
+        # ignore the boto3 deprecation warning
+        warnings.filterwarnings(
+            "ignore", message="datetime.datetime.utcnow.*is deprecated", category=DeprecationWarning
+        )
+        with ThreadPool(args.num_workers) as pool:
+            predicted_sqls: list[dict] = list(tqdm.tqdm(pool.imap(run_inference_wrapper, jobs), total=len(jobs)))
 
-    # run sql generation
-    sql_generation_output_dir = os.path.join(args.output_path, "4_sql_generation")
-    os.makedirs(sql_generation_output_dir, exist_ok=True)
-    cached_sql_generation_results: dict = {}
-    for file in os.listdir(sql_generation_output_dir):
-        if file.endswith(".json"):
-            index = int(file.split(".")[0])
-            with open(os.path.join(sql_generation_output_dir, file), "r") as f:
-                cached_sql_generation_results[index] = json.load(f)
-    logger.info(f"Loaded {len(cached_sql_generation_results)} cached sql generation results")
-    logger.info(f"Running sql generation for {len(test_data)-len(cached_sql_generation_results)} samples")
-    # run sql generation for each sample
-    sql_generation_results: dict = {}
-    for idx, sample in enumerate(tqdm.tqdm(test_data)):
-        if idx in cached_sql_generation_results:
-            sql_generation_result: list[str] = cached_sql_generation_results[idx]
-        else:
-            sql_generation_result: list[str] = run_candidate_sql_generation(
-                sample=sample,
-                generator=gcp_generator_candidate,
-                candidate_configs=candidate_configs,
-                schema_linking_outputs=schema_linking_outputs[idx],
-                few_shot_results=fewshot_retrieval_results[idx],
-            )
-        sql_generation_results[idx] = sql_generation_result
-        with open(os.path.join(sql_generation_output_dir, f"{idx:4d}.json"), "w") as f:
-            json.dump(sql_generation_result, f, indent=2)
-    del cached_sql_generation_results
-    logger.info("Sql generation complete")
+        prediction_outputs: dict[str, str] = {}
+        for idx, prediction in predicted_sqls:
+            prediction_outputs[str(idx)] = prediction
 
-    # run candidate selection
-    candidate_selection_output_dir = os.path.join(args.output_path, "5_candidate_selection")
-    os.makedirs(candidate_selection_output_dir, exist_ok=True)
-    cached_candidate_selection_results: dict = {}
-    for file in os.listdir(candidate_selection_output_dir):
-        if file.endswith(".txt"):
-            index = int(file.split(".")[0])
-            with open(os.path.join(candidate_selection_output_dir, file), "r") as f:
-                cached_candidate_selection_results[index] = f.read()
-    logger.info(f"Loaded {len(cached_candidate_selection_results)} cached candidate selection results")
-    logger.info(f"Running candidate selection for {len(test_data)-len(cached_candidate_selection_results)} samples")
-    # run candidate selection for each sample
-    candidate_selection_results: dict = {}
-    for idx, sample in enumerate(tqdm.tqdm(test_data)):
-        if idx in cached_candidate_selection_results:
-            candidate_selection_result = cached_candidate_selection_results[idx]
-        else:
-            candidate_selection_result = run_candidate_selection(
-                dataset=dataset,
-                schema_manager=schema_manager,
-                sample=sample,
-                candidate_sqls=sql_generation_results[idx],
-                generator=gcp_generator_selection,
-                chase=True,
-            )
-        candidate_selection_results[idx] = candidate_selection_result
-        with open(os.path.join(candidate_selection_output_dir, f"{idx:4d}.txt"), "w") as f:
-            f.write(candidate_selection_result)
-    logger.info("Candidate selection complete")
-
-    # check idx == question_id
-    predictions = {}
-    for idx in range(len(candidate_selection_results)):
-        question_id = test_data[idx]["question_id"]
-        prediction = candidate_selection_results[idx]
-        predictions[str(question_id)] = prediction
-    if len(predictions) != len(test_data):
-        raise ValueError(f"predictions length ({len(predictions)}) does not match test data length ({len(test_data)})")
-    with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
-        json.dump(predictions, f, indent=2)
+        with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
+            json.dump(prediction_outputs, f, indent=2)
 
     total_dict = {
         "prompt_tokens": 0,
