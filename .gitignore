@@ -215,3 +215,5 @@ terraform.rc
 **.tsv
 **.csv
 **.sql
+
+results**
