@@ -188,31 +188,6 @@ def run_candidate_schema_linking(
     return schema_linking_outputs
 
 
-def run_embedding(
-    sample: dict,
-    embedder: BaseEmbedder,
-    do_mask: bool = True,
-) -> list[dict]:
-    """run the embedding task
-
-    Args:
-        sample: one sample from the test set json
-        embedder: embedder
-        do_mask: whether to mask entities in the question
-    Returns:
-        embedding: the embedding of the question
-    """
-    question = sample["question"]
-    if do_mask:
-        question = replace_entities_with_tokens(question)
-    try:
-        embedding = embedder.embed(question)
-    except Exception as e:
-        logger.error(f"failed to embed question: {type(e).__name__}: {str(e)}")
-        raise e
-    return embedding
-
-
 def run_fewshot_retrieval(
     embedding: list[float],
     retriever: LocalRetriever,
@@ -341,81 +316,6 @@ def run_candidate_selection(
         chase=chase,
     )
     return best_sql
-
-
-def run_one_inference(
-        idx: int,
-        sample: dict, 
-        dataset: BaseDataset,
-        candidate_configs: list[dict], 
-        schema_manager: SchemaManager, 
-        azure_linker_token_counter: TokenCounter, 
-        gcp_linker_token_counter: TokenCounter, 
-        gcp_generator_candidate: GCPGenerator,
-        gcp_generator_selection: GCPGenerator,
-        embedder: BaseEmbedder, 
-        retriever: LocalRetriever, 
-        top_k: int,
-    ) -> dict:
-    step = "initialization"
-    try:
-
-        # run schema linking in parallel, one for each schema format and model
-        logger.debug(f"[{idx:03d}] doing schema linking...")
-        step = "schema linking"
-        schema_linking_outputs: defaultdict = run_candidate_schema_linking(
-            sample,
-            candidate_configs,
-            schema_manager,
-            azure_linker_token_counter,
-            gcp_linker_token_counter,
-        )
-
-        # get few-shot retrieval results
-        logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
-        step = "few shot retrieval"
-        few_shot_results: list[dict] = run_fewshot_retrieval(
-            embedder=embedder,
-            retriever=retriever,
-            sample=sample,
-            top_k=top_k,
-        )
-
-        # run SQL generation in parallel, one for each candidate config
-        logger.debug(f"[{idx:03d}] doing candidate sql generation...")
-        step = "candidate generation"
-        candidate_sqls: list[str] = run_candidate_sql_generation(
-            sample=sample,
-            generator=gcp_generator_candidate,
-            candidate_configs=candidate_configs,
-            schema_linking_outputs=schema_linking_outputs,
-            few_shot_results=few_shot_results,
-        )
-        # do candidate selection in single call - runs parallel under the hood
-        logger.debug(f"[{idx:03d}] doing candidate selection...")
-        step = "candidate selection"
-        best_sql: str = run_candidate_selection(
-            dataset=dataset,
-            schema_manager=schema_manager,
-            sample=sample,
-            candidate_sqls=candidate_sqls,
-            generator=gcp_generator_selection,
-            chase=True,
-        )
-        logger.debug(f"[{idx:03d}] best sql: {best_sql}") 
-    except Exception as e:
-        # like BIRD example dev data, add 0 if error
-        logger.error(f"[{idx:03d}] step '{step}' failed: {type(e).__name__}: {str(e)} - setting to 0")
-        best_sql = 0
-
-    return {
-        "idx": idx,
-        "sql": best_sql,
-    }
-
-
-def run_inference_wrapper(params: dict) -> dict:
-    return run_one_inference(**params)
 
 
 def main():
@@ -624,10 +524,9 @@ def main():
         logger.add(sys.stderr, level="INFO")
 
     # run schema linking
-    # create directory for schema linking outputs inside output path
+    # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
     os.makedirs(schema_linking_output_dir, exist_ok=True)
-    # load any existing schema linking jsons
     cached_schema_linking_results: dict = {}
     for file in os.listdir(schema_linking_output_dir):
         if file.endswith(".json"):
@@ -637,9 +536,18 @@ def main():
                 cached_schema_linking_results[index] = json.load(f)
     logger.info(f"Loaded {len(cached_schema_linking_results)} cached schema linking results")
     logger.info(f"Running schema linking for {len(test_data)-len(cached_schema_linking_results)} samples")
+    
     # run schema linking for each sample, with threading executor
     schema_linking_outputs: dict = {}
-    def maybe_run_candidate_schema_linking(idx, cached_schema_linking_results, sample, candidate_configs, schema_manager, azure_linker_token_counter, gcp_linker_token_counter):
+    def maybe_run_candidate_schema_linking(
+            idx, 
+            cached_schema_linking_results, 
+            sample, 
+            candidate_configs, 
+            schema_manager, 
+            azure_linker_token_counter, 
+            gcp_linker_token_counter
+        ) -> dict:
         if idx in cached_schema_linking_results:
             schema_linking_result = cached_schema_linking_results[idx]
         else:
@@ -652,26 +560,22 @@ def main():
             )
             with open(os.path.join(schema_linking_output_dir, f"{idx:4d}.json"), "w") as f:
                 json.dump(schema_linking_result, f, indent=2)
-        return schema_linking_result
+        return dict(schema_linking_result)
     
     with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
-        futures = [executor.submit(maybe_run_candidate_schema_linking, idx, cached_schema_linking_results, sample, candidate_configs, schema_manager, azure_linker_token_counter, gcp_linker_token_counter) for idx, sample in enumerate(test_data)]
+        futures = [executor.submit(
+            maybe_run_candidate_schema_linking, 
+            idx, 
+            cached_schema_linking_results, 
+            sample, 
+            candidate_configs, 
+            schema_manager, 
+            azure_linker_token_counter, 
+            gcp_linker_token_counter
+        ) for idx, sample in enumerate(test_data)]
         for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
             schema_linking_outputs[idx] = future.result()
-    # for idx, sample in enumerate(tqdm.tqdm(test_data)):
-    #     if idx in cached_schema_linking_results:
-    #         schema_linking_result = cached_schema_linking_results[idx]
-    #     else:
-    #         schema_linking_result = run_candidate_schema_linking(
-    #             sample, 
-    #             candidate_configs, 
-    #             schema_manager, 
-    #             azure_linker_token_counter, 
-    #             gcp_linker_token_counter,
-    #         )
-    #     schema_linking_outputs[idx] = schema_linking_result
-    #     with open(os.path.join(schema_linking_output_dir, f"{idx:4d}.json"), "w") as f:
-    #         json.dump(schema_linking_result, f, indent=2)
+
     del cached_schema_linking_results
     logger.info("Schema linking complete")
 
@@ -687,8 +591,18 @@ def main():
         logger.info(f"Loaded cached embeddings of size ({np.array(embeddings).shape})")
     else:
         logger.info("Generating embeddings...")
-        test_questions = [sample["question"] for sample in test_data]
-        embeddings = embedder.embed(test_questions, verbose=True)
+        # try to load processed questions
+        if os.path.isfile(os.path.join(embedding_output_dir, "masked_questions.txt")):
+            with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "r") as f:
+                masked_questions = f.read().splitlines()
+        else:
+            logger.info("Processing questions...")
+            test_questions = [sample["question"] for sample in test_data]
+            masked_questions = [replace_entities_with_tokens(question) for question in tqdm.tqdm(test_questions)]
+            with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "w") as f:
+                f.write("\n".join(masked_questions))
+        logger.info("Embedding processed questions...")
+        embeddings = embedder.embed(masked_questions, verbose=True)
         np.save(os.path.join(embedding_output_dir, "embeddings.npy"), embeddings)
     logger.info(f"Embeddings of size ({np.array(embeddings).shape}) complete")
     
@@ -727,22 +641,45 @@ def main():
                 cached_sql_generation_results[index] = json.load(f)
     logger.info(f"Loaded {len(cached_sql_generation_results)} cached sql generation results")
     logger.info(f"Running sql generation for {len(test_data)-len(cached_sql_generation_results)} samples")
-    # run sql generation for each sample
-    sql_generation_results: dict = {}
-    for idx, sample in enumerate(tqdm.tqdm(test_data)):
+    # run sql generation for each sample, using threading executor
+    def maybe_run_candidate_sql_generation(
+            idx, 
+            cached_sql_generation_results, 
+            sample, 
+            generator, 
+            candidate_configs, 
+            schema_linking_outputs, 
+            few_shot_results
+        ) -> list[str]:
         if idx in cached_sql_generation_results:
             sql_generation_result: list[str] = cached_sql_generation_results[idx]
         else:
             sql_generation_result: list[str] = run_candidate_sql_generation(
                 sample=sample,
-                generator=gcp_generator_candidate,
+                generator=generator,
                 candidate_configs=candidate_configs,
-                schema_linking_outputs=schema_linking_outputs[idx],
-                few_shot_results=fewshot_retrieval_results[idx],
+                schema_linking_outputs=schema_linking_outputs,
+                few_shot_results=few_shot_results,
             )
-        sql_generation_results[idx] = sql_generation_result
         with open(os.path.join(sql_generation_output_dir, f"{idx:4d}.json"), "w") as f:
             json.dump(sql_generation_result, f, indent=2)
+        return sql_generation_result
+
+    sql_generation_results: dict = {}
+    with ThreadPoolExecutor(max_workers=min(4, args.num_workers)) as executor:
+        futures = [executor.submit(
+            maybe_run_candidate_sql_generation, 
+            idx, 
+            cached_sql_generation_results, 
+            sample, 
+            gcp_generator_candidate, 
+            candidate_configs, 
+            schema_linking_outputs[idx], 
+            fewshot_retrieval_results[idx]
+        ) for idx, sample in enumerate(test_data)]
+        for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
+            sql_generation_results[idx] = future.result()
+
     del cached_sql_generation_results
     logger.info("Sql generation complete")
 
