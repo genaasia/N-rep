@@ -99,7 +99,7 @@ class AzureEmbedder(BaseEmbedder):
             **kwargs,
         )
 
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    @retry(wait=wait_random_exponential(min=3, max=60), stop=stop_after_attempt(8))
     def _embed_batch(self, batch_samples: list[str]) -> list[list[float]]:
         """embed one batch of texts with azure"""
         response = self.client.embeddings.create(
@@ -146,7 +146,7 @@ class BedrockCohereEmbedder(BaseEmbedder):
             region_name=self.region_name,
         )
 
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    @retry(wait=wait_random_exponential(min=3, max=60), stop=stop_after_attempt(8))
     def _embed_batch(self, batch_samples: list[str]) -> list[list[float]]:
         """embed one batch of texts"""
         request_body = json.dumps(

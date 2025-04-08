@@ -207,8 +207,15 @@ def run_fewshot_retrieval(
     question = sample["question"]
     if do_mask:
         question = replace_entities_with_tokens(question)
-    embedding = embedder.embed(question)
-    results = retriever.query(embedding, top_k=top_k)
+    try:
+        embedding = embedder.embed(question)
+    except Exception as e:
+        logger.error(f"failed to embed question: {type(e).__name__}: {str(e)}")
+        embedding = None
+    if embedding is not None:
+        results = retriever.query(embedding, top_k=top_k)
+    else:
+        results = []
     return results
 
 
@@ -339,10 +346,12 @@ def run_one_inference(
         retriever: LocalRetriever, 
         top_k: int,
     ) -> dict:
+    step = "initialization"
     try:
 
         # run schema linking in parallel, one for each schema format and model
         logger.debug(f"[{idx:03d}] doing schema linking...")
+        step = "schema linking"
         schema_linking_outputs: defaultdict = run_candidate_schema_linking(
             sample,
             candidate_configs,
@@ -353,6 +362,7 @@ def run_one_inference(
 
         # get few-shot retrieval results
         logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
+        step = "few shot retrieval"
         few_shot_results: list[dict] = run_fewshot_retrieval(
             embedder=embedder,
             retriever=retriever,
@@ -362,6 +372,7 @@ def run_one_inference(
 
         # run SQL generation in parallel, one for each candidate config
         logger.debug(f"[{idx:03d}] doing candidate sql generation...")
+        step = "candidate generation"
         candidate_sqls: list[str] = run_candidate_sql_generation(
             sample=sample,
             generator=gcp_generator_candidate,
@@ -371,6 +382,7 @@ def run_one_inference(
         )
         # do candidate selection in single call - runs parallel under the hood
         logger.debug(f"[{idx:03d}] doing candidate selection...")
+        step = "candidate selection"
         best_sql: str = run_candidate_selection(
             dataset=dataset,
             schema_manager=schema_manager,
@@ -382,7 +394,7 @@ def run_one_inference(
         logger.debug(f"[{idx:03d}] best sql: {best_sql}") 
     except Exception as e:
         # like BIRD example dev data, add 0 if error
-        logger.error(f"[{idx:03d}] {type(e).__name__}: {str(e)} - setting to 0")
+        logger.error(f"[{idx:03d}] step '{step}' failed: {type(e).__name__}: {str(e)} - setting to 0")
         best_sql = 0
 
     return {
@@ -546,7 +558,7 @@ def main():
     cohere_character_counter = CharacterCounter()
     azure_linker_token_counter = TokenCounter()
     gcp_linker_token_counter = TokenCounter()
-    gcp_candidate_token_counter = TokenCounter()
+    gcp_candidate_token_counter = TokenCounter() 
     gcp_selection_token_counter = TokenCounter()
 
     # create generators
