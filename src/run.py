@@ -23,6 +23,7 @@ from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder
 from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator
 from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
 from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
+from text2sql.engine.prompts.formatters import RewritePromptFormatter
 from text2sql.engine.retrieval import LocalRetriever
 from text2sql.engine.generation.postprocessing import extract_first_code_block
 from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens, CharacterCounter, TokenCounter
@@ -283,6 +284,47 @@ def run_candidate_sql_generation(
     return candidate_sqls
 
 
+def run_sql_rewrite(
+    generator: BaseGenerator,
+    question: str,
+    original_sql: str,
+    schema_description: str,
+) -> str:
+    """run the sql generation task"""
+    # format messages
+    message_formatter = RewritePromptFormatter(
+        database_type="sqlite",
+    )
+    messages = message_formatter.generate_messages(
+        schema_description=schema_description,
+        query=question,
+        original_sql=original_sql,
+    )
+    # run inference
+    raw_prediction = generator.generate(messages, temperature=0.0)
+    sql_prediction = extract_first_code_block(raw_prediction)
+    if not sql_prediction:
+        sql_prediction = raw_prediction
+    return sql_prediction
+
+
+def check_need_rewrite(result):
+    if len(result) == 0:
+        return True
+    else:
+        has_non_none = False
+        for result_row in result:
+            for value in result_row.values():
+                if value is not None and value != "" and value != [] and value != 0 and value != 0.0:
+                    has_non_none = True
+                    break
+            if has_non_none:
+                break
+        if not has_non_none:
+            return True
+    return False
+
+
 def run_candidate_selection(
     dataset: BaseDataset,
     schema_manager: SchemaManager,
@@ -299,6 +341,12 @@ def run_candidate_selection(
         execution_result_dict: dict = dataset.validate_query(database, sql_query)
         execution_results: list[dict] = execution_result_dict.get("execution_result", [])
         is_valid = execution_result_dict.get("success", False)
+        if check_need_rewrite(execution_results):
+            try:
+                sql_query = run_sql_rewrite(generator, sample["question"], sql_query, schema_manager.get_full_schema(database, "mac_schema"))
+                logger.info(f"Rewritten SQL: {sql_query}")
+            except Exception as e:
+                logger.error(f"Error in run_sql_rewrite: {str(e)}")
 
         sample_dicts.append(
             {
