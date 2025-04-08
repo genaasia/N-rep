@@ -325,6 +325,76 @@ def run_candidate_selection(
     return best_sql
 
 
+def run_one_inference(
+        idx: int,
+        sample: dict, 
+        dataset: BaseDataset,
+        candidate_configs: list[dict], 
+        schema_manager: SchemaManager, 
+        azure_linker_token_counter: TokenCounter, 
+        gcp_linker_token_counter: TokenCounter, 
+        gcp_generator_candidate: GCPGenerator,
+        gcp_generator_selection: GCPGenerator,
+        embedder: BaseEmbedder, 
+        retriever: LocalRetriever, 
+        top_k: int,
+    ) -> dict:
+    try:
+
+        # run schema linking in parallel, one for each schema format and model
+        logger.debug(f"[{idx:03d}] doing schema linking...")
+        schema_linking_outputs: defaultdict = run_candidate_schema_linking(
+            sample,
+            candidate_configs,
+            schema_manager,
+            azure_linker_token_counter,
+            gcp_linker_token_counter,
+        )
+
+        # get few-shot retrieval results
+        logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
+        few_shot_results: list[dict] = run_fewshot_retrieval(
+            embedder=embedder,
+            retriever=retriever,
+            sample=sample,
+            top_k=top_k,
+        )
+
+        # run SQL generation in parallel, one for each candidate config
+        logger.debug(f"[{idx:03d}] doing candidate sql generation...")
+        candidate_sqls: list[str] = run_candidate_sql_generation(
+            sample=sample,
+            generator=gcp_generator_candidate,
+            candidate_configs=candidate_configs,
+            schema_linking_outputs=schema_linking_outputs,
+            few_shot_results=few_shot_results,
+        )
+        # do candidate selection in single call - runs parallel under the hood
+        logger.debug(f"[{idx:03d}] doing candidate selection...")
+        best_sql: str = run_candidate_selection(
+            dataset=dataset,
+            schema_manager=schema_manager,
+            sample=sample,
+            candidate_sqls=candidate_sqls,
+            generator=gcp_generator_selection,
+            chase=True,
+        )
+        logger.debug(f"[{idx:03d}] best sql: {best_sql}") 
+    except Exception as e:
+        # like BIRD example dev data, add 0 if error
+        logger.error(f"[{idx:03d}] {type(e).__name__}: {str(e)} - setting to 0")
+        best_sql = 0
+
+    return {
+        "idx": idx,
+        "sql": best_sql,
+    }
+
+
+def run_inference_wrapper(params: dict) -> dict:
+    return run_one_inference(**params)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -381,6 +451,12 @@ def main():
         type=int,
         default=None,
         help="run in debug mode (do small subset of data, default is None)",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=5,
+        help="number of workers to use for inference, default is 5",
     )
     args = parser.parse_args()
 
@@ -524,68 +600,35 @@ def main():
         logger.add(sys.stderr, level="INFO")
 
     prediction_outputs: dict = {}
+    jobs = []
+    for _idx, sample in enumerate(test_data):
+        idx = int(sample.get("question_id", _idx))
+        jobs.append({
+            "idx": idx,
+            "sample": sample,
+            "dataset": dataset,
+            "candidate_configs": candidate_configs,
+            "schema_manager": schema_manager,
+            "azure_linker_token_counter": azure_linker_token_counter,
+            "gcp_linker_token_counter": gcp_linker_token_counter,
+            "gcp_generator_candidate": gcp_generator_candidate,
+            "gcp_generator_selection": gcp_generator_selection,
+            "embedder": embedder,
+            "retriever": retriever,
+            "top_k": top_k,
+        })
 
     with warnings.catch_warnings():
         # ignore the boto3 deprecation warning
         warnings.filterwarnings(
             "ignore", message="datetime.datetime.utcnow.*is deprecated", category=DeprecationWarning
         )
+        with ThreadPool(args.num_workers) as pool:
+            predicted_sqls: list[dict] = list(tqdm.tqdm(pool.imap(run_inference_wrapper, jobs), total=len(jobs)))
 
-        for _idx, sample in enumerate(tqdm.tqdm(test_data)):
-
-            idx = int(sample.get("question_id", _idx))
-
-            try:
-
-                # run schema linking in parallel, one for each schema format and model
-                logger.debug(f"[{idx:03d}] doing schema linking...")
-                schema_linking_outputs: defaultdict = run_candidate_schema_linking(
-                    sample,
-                    candidate_configs,
-                    schema_manager,
-                    azure_linker_token_counter,
-                    gcp_linker_token_counter,
-                )
-
-                # get few-shot retrieval results
-                logger.debug(f"[{idx:03d}] doing few-shot retrieval...")
-                few_shot_results: list[dict] = run_fewshot_retrieval(
-                    embedder=embedder,
-                    retriever=retriever,
-                    sample=sample,
-                    top_k=top_k,
-                )
-
-                # run SQL generation in parallel, one for each candidate config
-                logger.debug(f"[{idx:03d}] doing candidate sql generation...")
-                candidate_sqls: list[str] = run_candidate_sql_generation(
-                    sample=sample,
-                    generator=gcp_generator_candidate,
-                    candidate_configs=candidate_configs,
-                    schema_linking_outputs=schema_linking_outputs,
-                    few_shot_results=few_shot_results,
-                )
-                # do candidate selection in single call - runs parallel under the hood
-                logger.debug(f"[{idx:03d}] doing candidate selection...")
-                best_sql: str = run_candidate_selection(
-                    dataset=dataset,
-                    schema_manager=schema_manager,
-                    sample=sample,
-                    candidate_sqls=candidate_sqls,
-                    generator=gcp_generator_selection,
-                    chase=True,
-                )
-                logger.debug(f"[{idx:03d}] best sql: {best_sql}")
-                prediction_outputs[str(idx)] = best_sql
-            except Exception as e:
-                # like BIRD example dev data, add 0 if error
-                logger.error(f"[{idx:03d}] {type(e).__name__}: {str(e)} - setting to 0")
-                prediction_outputs[str(idx)] = 0
-
-            # save prediction outputs to file every 100 samples
-            if _idx % 100 == 0 and _idx != 0:
-                with open(os.path.join(args.output_path, f"predictions_temp.json"), "w") as f:
-                    json.dump(prediction_outputs, f, indent=2)
+        prediction_outputs: dict[str, str] = {}
+        for idx, prediction in predicted_sqls:
+            prediction_outputs[str(idx)] = prediction
 
         with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
             json.dump(prediction_outputs, f, indent=2)
