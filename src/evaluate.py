@@ -64,15 +64,20 @@ def main():
 
         try:
             # Execute predicted SQL
-            predicted_results = dataset.query_database(db_id, predicted_sql)
+            predicted_result_dict = dataset.validate_query(db_id, predicted_sql)
+            prediction_valid = predicted_result_dict.get("validated", False)
+            predicted_results = predicted_result_dict.get("execution_result", [])
 
             # Execute ground truth SQL
-            ground_truth_results = dataset.query_database(db_id, ground_truth_sql)
+            ground_truth_result_dict = dataset.validate_query(db_id, ground_truth_sql)
+            ground_truth_results = ground_truth_result_dict.get("execution_result", [])
 
             # Compare results
-            is_match = execution_match(predicted_results, ground_truth_results)
+            is_match = prediction_valid and execution_match(predicted_results, ground_truth_results)
 
-            valid_count += 1
+            if prediction_valid:
+                valid_count += 1
+
             results.append(int(is_match))
 
         except Exception as e:

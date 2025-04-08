@@ -166,12 +166,16 @@ def process_prediction_pair(
         return (idx, 1)
 
     # Get table mappings for both predictions
-    outer_table_mapping = get_table_mapping(schema_manager.get_schema_mapping(db_id), predictions[idx]["sql"])[
-        "table_map"
-    ]
-    inner_table_mapping = get_table_mapping(schema_manager.get_schema_mapping(db_id), predictions[inner_idx]["sql"])[
-        "table_map"
-    ]
+    try:
+        outer_table_mapping = get_table_mapping(schema_manager.get_schema_mapping(db_id), predictions[idx]["sql"])[
+            "table_map"
+        ]
+        inner_table_mapping = get_table_mapping(schema_manager.get_schema_mapping(db_id), predictions[inner_idx]["sql"])[
+            "table_map"
+        ]
+    except Exception:
+        # case where parsing fails e.g. LLM output not SQL
+        return None
 
     # Merge table mappings and parse schema
     table_mapping = merge_table_mapping(outer_table_mapping, inner_table_mapping)
