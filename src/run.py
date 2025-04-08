@@ -79,6 +79,7 @@ def run_schema_linking(
     schema_manager: SchemaManager,
     sample: dict,
     schema_format: str,
+    schema_linking_generator: str,
 ) -> dict:
     """run the schema linking task
 
@@ -97,7 +98,8 @@ def run_schema_linking(
     # generate the input messages and run inference
     message_formatter = SchemaLinkingFewShotFormatter(SCHEMA_LINKING_EXAMPLES, description_format=schema_format)
     schema_description = schema_manager.get_full_schema(db_id, schema_format)
-    messages = message_formatter.generate_messages(schema_description, question, evidence)
+    is_gemini = schema_linking_generator == "gcp"
+    messages = message_formatter.generate_messages(schema_description, question, evidence, gemini=is_gemini)
     raw_prediction = generator.generate(messages, temperature=0.0)
     try:
         full_linking: dict = parse_json_from_prediction(raw_prediction)
@@ -173,6 +175,7 @@ def run_candidate_schema_linking(
                     "schema_manager": schema_manager,
                     "sample": sample,
                     "schema_format": schema_format,
+                    "schema_linking_generator": schema_linking_generator,
                 }
             )
 
