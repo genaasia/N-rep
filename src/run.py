@@ -24,7 +24,7 @@ from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
 from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.retrieval import LocalRetriever
 from text2sql.engine.generation.postprocessing import extract_first_code_block
-from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens, TokenCounter
+from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens, CharacterCounter, TokenCounter
 
 from text2sql.pipeline.selection import select_best_candidate
 
@@ -466,29 +466,32 @@ def main():
     else:
         column_meaning_json = {}
 
+    # counters for tracking usage
+    cohere_character_counter = CharacterCounter()
+    azure_linker_token_counter = TokenCounter()
+    gcp_linker_token_counter = TokenCounter()
+    gcp_candidate_token_counter = TokenCounter()
+    gcp_selection_token_counter = TokenCounter()
+
     # create generators
     logger.info("Creating embedder...")
     embedder = BedrockCohereEmbedder(
         model=os.getenv("AWS_MODEL_NAME"),
         region_name=os.getenv("AWS_REGION_NAME"),
         input_type=os.getenv("AWS_INPUT_TYPE"),
+        counter=cohere_character_counter,
     )
 
     logger.info("Creating & testing azure generator...")
     test_messages = [{"role": "user", "content": "What is the capital of South Korea? Answer in one word."}]
 
-    azure_linker_token_counter = TokenCounter()
-    gcp_linker_token_counter = TokenCounter()
-    gcp_candidate_token_counter = TokenCounter()
-    gcp_selection_token_counter = TokenCounter()
-
-    azure_generator = AzureGenerator(
+    test_azure_generator = AzureGenerator(
         model=os.getenv("AZURE_OPENAI_MODEL"),
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),
         azure_endpoint=os.getenv("AZURE_OPENAI_API_ENDPOINT"),
         api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
     )
-    p = azure_generator.generate(test_messages, temperature=0.0)
+    p = test_azure_generator.generate(test_messages, temperature=0.0)
     logger.info(f"Azure generator test response: '{p}'")
 
     logger.info("Creating & testing Gemini generator...")
@@ -514,7 +517,7 @@ def main():
 
     # check for debug mode
     if args.debug:
-        logger.warning("!!!!! DEBUG - Running on data subset !!!!!")
+        logger.warning(f"!!!!! DEBUG - Running on {args.debug} data subset !!!!!")
         test_data = test_data[: args.debug]
     else:
         logger.remove()
@@ -579,6 +582,11 @@ def main():
                 logger.error(f"[{idx:03d}] {type(e).__name__}: {str(e)} - setting to 0")
                 prediction_outputs[str(idx)] = 0
 
+            # save prediction outputs to file every 100 samples
+            if _idx % 100 == 0 and _idx != 0:
+                with open(os.path.join(args.output_path, f"predictions_temp.json"), "w") as f:
+                    json.dump(prediction_outputs, f, indent=2)
+
         with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
             json.dump(prediction_outputs, f, indent=2)
 
@@ -601,11 +609,12 @@ def main():
         total_dict["call_count"] += token_counter.call_count
 
     all_counts = {
+        "cohere_character_counts": cohere_character_counter.get_counts(),
         "azure_linker_counts": azure_linker_token_counter.get_counts(),
         "gcp_linker_counts": gcp_linker_token_counter.get_counts(),
         "gcp_candidate_counts": gcp_candidate_token_counter.get_counts(),
         "gcp_selection_counts": gcp_selection_token_counter.get_counts(),
-        "total": total_dict,
+        "total_token_usage": total_dict,
     }
     logger.info(f"Token Counts: {json.dumps(all_counts, indent=4)}")
     with open(os.path.join(args.output_path, "token_counts.json"), "w") as f:
