@@ -53,7 +53,7 @@ class AzureGenerator(BaseGenerator):
         )
         self.counter = counter
 
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    @retry(wait=wait_random_exponential(min=3, max=60), stop=stop_after_attempt(8))
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
         """embed one batch of texts with azure"""
         chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
@@ -85,7 +85,7 @@ class BedrockGenerator(BaseGenerator):
         self.post_func = post_func
         self.client = get_bedrock_client(region_name=self.region_name, **kwargs)
 
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    @retry(wait=wait_random_exponential(min=3, max=60), stop=stop_after_attempt(8))
     def generate(self, messages: list[dict], **kwargs) -> str:
         system_message, formatted_messages = convert_messages_to_bedrock_format(model=self.model, messages=messages)
         if system_message:
@@ -127,7 +127,7 @@ class GCPGenerator(BaseGenerator):
         self.counter = counter
         genai.configure(api_key=api_key)
 
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    @retry(wait=wait_random_exponential(min=3, max=60), stop=stop_after_attempt(8))
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
         system_instruction = "\n".join([message["content"] for message in messages if message["role"] == "system"])
         if system_instruction:
@@ -177,7 +177,7 @@ class OpenAIGenerator(BaseGenerator):
         self.post_func = post_func
         self.client: OpenAI = get_openai_client(api_key=api_key, base_url=base_url, **kwargs)
 
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(5))
+    @retry(wait=wait_random_exponential(min=3, max=60), stop=stop_after_attempt(8))
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
         """embed one batch of texts with OpenAI client"""
         chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
