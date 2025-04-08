@@ -298,7 +298,7 @@ def run_sql_rewrite(
     messages = message_formatter.generate_messages(
         schema_description=schema_description,
         query=question,
-        original_sql=original_sql,
+        predicted_sql=original_sql,
     )
     # run inference
     raw_prediction = generator.generate(messages, temperature=0.0)
@@ -325,6 +325,20 @@ def check_need_rewrite(result):
     return False
 
 
+def run_rewrite_check(sample: dict, predicted_sql: str, dataset: BaseDataset, generator: BaseGenerator, schema_manager: SchemaManager) -> str:
+    database = sample["db_id"]
+    execution_result_dict: dict = dataset.validate_query(database, predicted_sql)
+    execution_results: list[dict] = execution_result_dict.get("execution_result", [])
+    if check_need_rewrite(execution_results):
+        try:
+            predicted_sql = run_sql_rewrite(generator, sample["question"], predicted_sql, schema_manager.get_full_schema(database, "mac_schema"))
+            logger.debug(f"Rewritten SQL: {predicted_sql}")
+        except Exception as e:
+            logger.error(f"Error in run_sql_rewrite: {str(e)}")
+
+    return predicted_sql
+
+
 def run_candidate_selection(
     dataset: BaseDataset,
     schema_manager: SchemaManager,
@@ -341,12 +355,6 @@ def run_candidate_selection(
         execution_result_dict: dict = dataset.validate_query(database, sql_query)
         execution_results: list[dict] = execution_result_dict.get("execution_result", [])
         is_valid = execution_result_dict.get("success", False)
-        if check_need_rewrite(execution_results):
-            try:
-                sql_query = run_sql_rewrite(generator, sample["question"], sql_query, schema_manager.get_full_schema(database, "mac_schema"))
-                logger.info(f"Rewritten SQL: {sql_query}")
-            except Exception as e:
-                logger.error(f"Error in run_sql_rewrite: {str(e)}")
 
         sample_dicts.append(
             {
@@ -366,6 +374,38 @@ def run_candidate_selection(
         chase=chase,
     )
     return best_sql
+
+
+def save_token_counts(output_dir: str, counters: dict) -> None:
+    """Save token counts to a JSON file in the specified directory.
+    
+    Args:
+        output_dir: Directory to save the token counts
+        counters: Dictionary of counters to save
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    counts_file = os.path.join(output_dir, "token_counts.json")
+    counts = {name: counter.get_counts() for name, counter in counters.items()}
+    with open(counts_file, "w") as f:
+        json.dump(counts, f, indent=2)
+    logger.info(f"Saved token counts to {counts_file}")
+
+
+def load_token_counts(output_dir: str, counters: dict) -> None:
+    """Load token counts from a JSON file in the specified directory.
+    
+    Args:
+        output_dir: Directory containing the token counts
+        counters: Dictionary of counters to update
+    """
+    counts_file = os.path.join(output_dir, "token_counts.json")
+    if os.path.exists(counts_file):
+        with open(counts_file, "r") as f:
+            counts = json.load(f)
+        for name, counter in counters.items():
+            if name in counts:
+                counter.update_counts(counts[name])
+        logger.info(f"Loaded token counts from {counts_file}")
 
 
 def main():
@@ -577,9 +617,17 @@ def main():
     # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
     os.makedirs(schema_linking_output_dir, exist_ok=True)
+    
+    # Load token counts for schema linking
+    schema_linking_counters = {
+        "azure_linker": azure_linker_token_counter,
+        "gcp_linker": gcp_linker_token_counter
+    }
+    load_token_counts(schema_linking_output_dir, schema_linking_counters)
+    
     cached_schema_linking_results: dict = {}
     for file in os.listdir(schema_linking_output_dir):
-        if file.endswith(".json"):
+        if file.endswith(".json") and file != "token_counts.json":
             # get id from filename
             index = int(file.split(".")[0])
             with open(os.path.join(schema_linking_output_dir, file), "r") as f:
@@ -625,6 +673,9 @@ def main():
         ) for idx, sample in enumerate(test_data)]
         for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
             schema_linking_outputs[idx] = future.result()
+    
+    # Save token counts for schema linking
+    save_token_counts(schema_linking_output_dir, schema_linking_counters)
 
     del cached_schema_linking_results
     logger.info("Schema linking complete")
@@ -632,6 +683,13 @@ def main():
     # run embeddings
     embedding_output_dir = os.path.join(args.output_path, "2_embeddings")
     os.makedirs(embedding_output_dir, exist_ok=True)
+    
+    # Load token counts for embeddings
+    embedding_counters = {
+        "cohere_character": cohere_character_counter
+    }
+    load_token_counts(embedding_output_dir, embedding_counters)
+    
     # check for cached npy embeddings file
     _embeddings = None
     if os.path.isfile(os.path.join(embedding_output_dir, "embeddings.npy")):
@@ -654,14 +712,19 @@ def main():
         logger.info("Embedding processed questions...")
         embeddings = embedder.embed(masked_questions, verbose=True)
         np.save(os.path.join(embedding_output_dir, "embeddings.npy"), embeddings)
+    
+    # Save token counts for embeddings
+    save_token_counts(embedding_output_dir, embedding_counters)
+    
     logger.info(f"Embeddings of size ({np.array(embeddings).shape}) complete")
     
     # run fewshot retrieval
     fewshot_retrieval_output_dir = os.path.join(args.output_path, "3_fewshot_retrieval")
     os.makedirs(fewshot_retrieval_output_dir, exist_ok=True)
+    
     cached_fewshot_retrieval_results: dict = {}
     for file in os.listdir(fewshot_retrieval_output_dir):
-        if file.endswith(".json"):
+        if file.endswith(".json") and file != "token_counts.json":
             index = int(file.split(".")[0])
             with open(os.path.join(fewshot_retrieval_output_dir, file), "r") as f:
                 cached_fewshot_retrieval_results[index] = json.load(f)
@@ -683,9 +746,16 @@ def main():
     # run sql generation
     sql_generation_output_dir = os.path.join(args.output_path, "4_sql_generation")
     os.makedirs(sql_generation_output_dir, exist_ok=True)
+    
+    # Load token counts for SQL generation
+    sql_generation_counters = {
+        "gcp_candidate": gcp_candidate_token_counter
+    }
+    load_token_counts(sql_generation_output_dir, sql_generation_counters)
+    
     cached_sql_generation_results: dict = {}
     for file in os.listdir(sql_generation_output_dir):
-        if file.endswith(".json"):
+        if file.endswith(".json") and file != "token_counts.json":
             index = int(file.split(".")[0])
             with open(os.path.join(sql_generation_output_dir, file), "r") as f:
                 cached_sql_generation_results[index] = json.load(f)
@@ -729,16 +799,89 @@ def main():
         ) for idx, sample in enumerate(test_data)]
         for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
             sql_generation_results[idx] = future.result()
+    
+    # Save token counts for SQL generation
+    save_token_counts(sql_generation_output_dir, sql_generation_counters)
 
     del cached_sql_generation_results
     logger.info("Sql generation complete")
 
+    # run rewrite check
+    rewritten_results_output_dir = os.path.join(args.output_path, "5_rewritten_results")
+    os.makedirs(rewritten_results_output_dir, exist_ok=True)
+    
+    # Load token counts for rewrite check
+    rewrite_counters = {
+        "gcp_candidate": gcp_candidate_token_counter
+    }
+    load_token_counts(rewritten_results_output_dir, rewrite_counters)
+    
+    cached_rewritten_results: dict = {}
+    for file in os.listdir(rewritten_results_output_dir):
+        if file.endswith(".json") and file != "token_counts.json":
+            index = int(file.split(".")[0])
+            with open(os.path.join(rewritten_results_output_dir, file), "r") as f:
+                cached_rewritten_results[index] = json.load(f)
+    logger.info(f"Loaded {len(cached_rewritten_results)} cached rewritten results")
+    logger.info(f"Running rewrite check for {len(test_data)-len(cached_rewritten_results)} samples")
+    
+    # Flatten the sql_generation_results dict into a list of tuples (idx, sql_idx, sql)
+    flattened_sqls = []
+    for idx, sqls in sql_generation_results.items():
+        for sql_idx, sql in enumerate(sqls):
+            flattened_sqls.append((idx, sql_idx, sql))
+    
+    # Function to run rewrite check on a single SQL
+    def run_rewrite_check_wrapper(params):
+        idx, sql_idx, sql = params
+        sample = test_data[idx]
+        try:
+            rewritten_sql = run_rewrite_check(
+                sample=sample,
+                predicted_sql=sql,
+                dataset=dataset,
+                generator=gcp_generator_candidate,
+                schema_manager=schema_manager
+            )
+            return idx, sql_idx, rewritten_sql
+        except Exception as e:
+            logger.error(f"Error in rewrite check for idx {idx}, sql_idx {sql_idx}: {str(e)}")
+            return idx, sql_idx, sql  # Return original SQL if rewrite fails
+    
+    # Run rewrite check in parallel
+    rewritten_sqls = {}
+    if flattened_sqls:
+        with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
+            futures = [executor.submit(run_rewrite_check_wrapper, params) for params in flattened_sqls]
+            for future in tqdm.tqdm(futures, total=len(flattened_sqls), desc="Running rewrite check"):
+                idx, sql_idx, rewritten_sql = future.result()
+                if idx not in rewritten_sqls:
+                    rewritten_sqls[idx] = [""] * len(sql_generation_results[idx])
+                rewritten_sqls[idx][sql_idx] = rewritten_sql
+    
+    # Save rewritten results
+    for idx, rewritten_sql_list in rewritten_sqls.items():
+        with open(os.path.join(rewritten_results_output_dir, f"{idx:04d}.json"), "w") as f:
+            json.dump(rewritten_sql_list, f, indent=2)
+    
+    # Save token counts for rewrite check
+    save_token_counts(rewritten_results_output_dir, rewrite_counters)
+    
+    logger.info("Rewrite check complete")
+
     # run candidate selection
-    candidate_selection_output_dir = os.path.join(args.output_path, "5_candidate_selection")
+    candidate_selection_output_dir = os.path.join(args.output_path, "6_candidate_selection")
     os.makedirs(candidate_selection_output_dir, exist_ok=True)
+    
+    # Load token counts for candidate selection
+    selection_counters = {
+        "gcp_selection": gcp_selection_token_counter
+    }
+    load_token_counts(candidate_selection_output_dir, selection_counters)
+    
     cached_candidate_selection_results: dict = {}
     for file in os.listdir(candidate_selection_output_dir):
-        if file.endswith(".txt"):
+        if file.endswith(".txt") and file != "token_counts.json":
             index = int(file.split(".")[0])
             with open(os.path.join(candidate_selection_output_dir, file), "r") as f:
                 cached_candidate_selection_results[index] = f.read()
@@ -750,17 +893,23 @@ def main():
         if idx in cached_candidate_selection_results:
             candidate_selection_result = cached_candidate_selection_results[idx]
         else:
+            # Use rewritten SQLs if available, otherwise use original SQLs
+            candidate_sqls = rewritten_sqls.get(idx, sql_generation_results[idx])
             candidate_selection_result = run_candidate_selection(
                 dataset=dataset,
                 schema_manager=schema_manager,
                 sample=sample,
-                candidate_sqls=sql_generation_results[idx],
+                candidate_sqls=candidate_sqls,
                 generator=gcp_generator_selection,
                 chase=True,
             )
         candidate_selection_results[idx] = candidate_selection_result
         with open(os.path.join(candidate_selection_output_dir, f"{idx:4d}.txt"), "w") as f:
             f.write(candidate_selection_result)
+    
+    # Save token counts for candidate selection
+    save_token_counts(candidate_selection_output_dir, selection_counters)
+    
     logger.info("Candidate selection complete")
 
     # check idx == question_id

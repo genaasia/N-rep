@@ -2,17 +2,38 @@ import threading
 
 
 class TokenCounter:
-    def __init__(self):
+    def __init__(self, initial_counts=None):
         """A thread-safe counter for tracking token usage in LLM API calls.
 
         All operations are protected by a threading lock to ensure thread safety
         when updating counts from multiple threads.
+
+        Args:
+            initial_counts (dict, optional): Dictionary with initial values for token counts.
+                Should have keys: 'prompt_tokens', 'completion_tokens', 'total_tokens', 'call_count'.
+                If not provided, all counts start at 0.
         """
         self.prompt_tokens: int = 0
         self.completion_tokens: int = 0
         self.total_tokens: int = 0
         self.call_count: int = 0
         self.lock = threading.Lock()
+        
+        if initial_counts is not None:
+            self.update_counts(initial_counts)
+
+    def update_counts(self, counts: dict) -> None:
+        """Update the counter with values from the provided dictionary.
+
+        Args:
+            counts (dict): Dictionary with values to add to the current counts.
+                Should have keys: 'prompt_tokens', 'completion_tokens', 'total_tokens', 'call_count'.
+        """
+        with self.lock:
+            self.prompt_tokens += counts.get('prompt_tokens', 0)
+            self.completion_tokens += counts.get('completion_tokens', 0)
+            self.total_tokens += counts.get('total_tokens', 0)
+            self.call_count += counts.get('call_count', 0)
 
     def add_token_counts(self, prompt_tokens, completion_tokens) -> None:
         """Add token counts to the counter and increase call count.
@@ -43,15 +64,34 @@ class TokenCounter:
 
 
 class CharacterCounter:
-    def __init__(self):
+    def __init__(self, initial_counts=None):
         """A thread-safe counter for tracking character usage in LLM API calls.
 
         All operations are protected by a threading lock to ensure thread safety
         when updating counts from multiple threads.
+
+        Args:
+            initial_counts (dict, optional): Dictionary with initial values for character counts.
+                Should have keys: 'characters', 'call_count'.
+                If not provided, all counts start at 0.
         """
         self.characters: int = 0
         self.call_count: int = 0
         self.lock = threading.Lock()
+        
+        if initial_counts is not None:
+            self.update_counts(initial_counts)
+
+    def update_counts(self, counts: dict) -> None:
+        """Update the counter with values from the provided dictionary.
+
+        Args:
+            counts (dict): Dictionary with values to add to the current counts.
+                Should have keys: 'characters', 'call_count'.
+        """
+        with self.lock:
+            self.characters += counts.get('characters', 0)
+            self.call_count += counts.get('call_count', 0)
 
     def add_character_counts(self, characters: int) -> None:
         """Add token counts to the counter and increase call count.
