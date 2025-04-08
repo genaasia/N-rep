@@ -127,7 +127,7 @@ class GCPGenerator(BaseGenerator):
         self.counter = counter
         genai.configure(api_key=api_key)
 
-    @retry(wait=wait_random_exponential(min=5, max=60), stop=stop_after_attempt(8))
+    @retry(wait=wait_random_exponential(min=3, max=30), stop=stop_after_attempt(3))
     def generate(self, messages: list[dict], **kwargs) -> list[list[float]]:
         system_instruction = "\n".join([message["content"] for message in messages if message["role"] == "system"])
         if system_instruction:
@@ -143,7 +143,6 @@ class GCPGenerator(BaseGenerator):
                 history.append(new_message)
 
         chat = client.start_chat(history=history)
-
         result = chat.send_message(messages[-1]["content"])
         if self.counter:
             self.counter.add_token_counts(

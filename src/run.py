@@ -269,8 +269,13 @@ def run_candidate_sql_generation(
             }
         )
 
-    def run_sql_generation_wrapper(job_dict):
-        return run_sql_generation(**job_dict)
+    def run_sql_generation_wrapper(job_dict) -> str:
+        try:
+            return run_sql_generation(**job_dict)
+        except Exception as e:
+            # handle e.g. the StopCandidateException due to RECITATION
+            logger.warning(f"Error generating SQL: {type(e).__name__}: {str(e)}")
+            return ""
 
     with ThreadPool(len(gen_args)) as pool:
         candidate_sqls: list[str] = list(pool.imap(run_sql_generation_wrapper, gen_args))
