@@ -292,7 +292,8 @@ def run_candidate_selection(
     sample_dicts: list[dict] = []
     for sql_query in candidate_sqls:
         try:
-            execution_results: list[dict] = dataset.query_database(database, sql_query)
+            execution_result_dict: dict = dataset.validate_query(database, sql_query)
+            execution_results: list[dict] = execution_result_dict.get("execution_result", [])
             is_valid = True
         except Exception as e:
             execution_results = []
