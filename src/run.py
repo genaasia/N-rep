@@ -602,9 +602,7 @@ def main():
     p = gcp_generator_candidate.generate(test_messages, temperature=0.0)
     logger.info(f"Gemini generator test response: '{p}'")
 
-    #############################
     # preprocessing
-    #############################
     dataset, schema_manager = prepare_dataset_information(args.test_database_path, args.test_tables_json_path)
     retriever = prepare_fewshot_retriever(args.embeddings_path, args.embeddings_data_path)
 
@@ -618,9 +616,7 @@ def main():
         logger.remove()
         logger.add(sys.stderr, level="INFO")
 
-    #############################
-    # schema linking
-    #############################
+    # run schema linking
     # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
     os.makedirs(schema_linking_output_dir, exist_ok=True)
@@ -687,9 +683,7 @@ def main():
     del cached_schema_linking_results
     logger.info("Schema linking complete")
 
-    #############################
-    # question embedding
-    #############################
+    # run embeddings
     embedding_output_dir = os.path.join(args.output_path, "2_embeddings")
     os.makedirs(embedding_output_dir, exist_ok=True)
     
@@ -707,7 +701,7 @@ def main():
         embeddings = _embeddings.tolist()
         logger.info(f"Loaded cached embeddings of size ({np.array(embeddings).shape})")
     else:
-        logger.info("Generating embeddings:")
+        logger.info("Generating embeddings...")
         # try to load processed questions
         if os.path.isfile(os.path.join(embedding_output_dir, "masked_questions.txt")):
             with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "r") as f:
@@ -727,9 +721,7 @@ def main():
     
     logger.info(f"Embeddings of size ({np.array(embeddings).shape}) complete")
     
-    #############################
-    # few-shot retrieval
-    #############################
+    # run fewshot retrieval
     fewshot_retrieval_output_dir = os.path.join(args.output_path, "3_fewshot_retrieval")
     os.makedirs(fewshot_retrieval_output_dir, exist_ok=True)
     
@@ -754,9 +746,7 @@ def main():
     del cached_fewshot_retrieval_results
     logger.info("Fewshot retrieval complete")
 
-    #############################
-    # sql candidate generation
-    #############################
+    # run sql generation
     sql_generation_output_dir = os.path.join(args.output_path, "4_sql_generation")
     os.makedirs(sql_generation_output_dir, exist_ok=True)
     
@@ -819,9 +809,7 @@ def main():
     del cached_sql_generation_results
     logger.info("Sql generation complete")
 
-    #############################
-    # rewriting
-    #############################
+    # run rewrite check
     rewritten_results_output_dir = os.path.join(args.output_path, "5_rewritten_results")
     os.makedirs(rewritten_results_output_dir, exist_ok=True)
     
@@ -884,9 +872,7 @@ def main():
     
     logger.info("Rewrite check complete")
 
-    #############################
-    # candidate selection
-    #############################
+    # run candidate selection
     candidate_selection_output_dir = os.path.join(args.output_path, "6_candidate_selection")
     os.makedirs(candidate_selection_output_dir, exist_ok=True)
     
@@ -929,9 +915,6 @@ def main():
     
     logger.info("Candidate selection complete")
 
-    #############################
-    # output saving
-    #############################
     # check idx == question_id and add \t----- bird -----\t<db_id>
     predictions = {}
     for idx in range(len(candidate_selection_results)):
