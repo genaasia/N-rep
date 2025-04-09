@@ -241,14 +241,21 @@ def schema_to_m_schema_format(
         output.append("]")
     
     # Add foreign keys section
-    output.append("【Foreign keys】")
+    has_foreign_keys = False
     for table_name, table_info in schema["tables"].items():
-        if "foreign_keys" in table_info:
-            for fk_column, fk_info in table_info["foreign_keys"].items():
-                fk_column = str(fk_column)  # Convert to string in case it's an integerSELECT name FROM sqlite_master WHERE type='table'
-                ref_table = fk_info["referenced_table"]
-                ref_column = fk_info["referenced_column"]
-                output.append(f"{table_name}.{fk_column}={ref_table}.{ref_column}")
+        if "foreign_keys" in table_info and table_info["foreign_keys"]:
+            has_foreign_keys = True
+            break
+    
+    if has_foreign_keys:
+        output.append("【Foreign keys】")
+        for table_name, table_info in schema["tables"].items():
+            if "foreign_keys" in table_info:
+                for fk_column, fk_info in table_info["foreign_keys"].items():
+                    fk_column = str(fk_column)  # Convert to string in case it's an integer
+                    ref_table = fk_info["referenced_table"]
+                    ref_column = fk_info["referenced_column"]
+                    output.append(f"{table_name}.{fk_column}={ref_table}.{ref_column}")
     
     return "\n".join(output)
 
