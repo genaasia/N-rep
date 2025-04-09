@@ -915,12 +915,13 @@ def main():
     
     logger.info("Candidate selection complete")
 
-    # check idx == question_id
+    # check idx == question_id and add \t----- bird -----\t<db_id>
     predictions = {}
     for idx in range(len(candidate_selection_results)):
         question_id = test_data[idx]["question_id"]
+        db_id = test_data[idx]["db_id"]
         prediction = candidate_selection_results[idx]
-        predictions[str(question_id)] = prediction
+        predictions[str(question_id)] = prediction + f"\t----- bird -----\t{db_id}"
     if len(predictions) != len(test_data):
         raise ValueError(f"predictions length ({len(predictions)}) does not match test data length ({len(test_data)})")
     with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
