@@ -12,6 +12,7 @@ from text2sql.data.schema_filtering import (
     parse_sql_create,
     parse_basic_format,
     parse_datagrip_format,
+    parse_sql_create_from_source
 )
 
 
@@ -147,7 +148,14 @@ class SchemaManager:
         elif mode == "m_schema":
             return parse_m_schema(full_schema, filter_dict)
         elif mode == "sql":
-            return parse_sql_create(full_schema, filter_dict)
+            # return parse_sql_create(full_schema, filter_dict)
+            try:
+                return parse_sql_create_from_source(self.dataset, database_name, filter_dict)
+            except Exception as e:
+                from loguru import logger
+                logger.warning(f"Filter Dict: {filter_dict}")
+                logger.warning(f"Error parsing sql create from source: {type(e).__name__}: {str(e)}")
+                return full_schema
         elif mode in ["basic", "basic_types", "basic_relations", "basic_types_relations"]:
             include_types = "types" in mode
             include_relations = "relations" in mode
