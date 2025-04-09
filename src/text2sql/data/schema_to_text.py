@@ -316,9 +316,9 @@ def get_mac_schema_column_samples(
                 except Exception:
                     continue
             
-            # Get ALL distinct values first, sorted by frequency
+            # Get ALL distinct values first, sorted by frequency - EXACTLY as in agents.py
             quoted_col = f'"{col_name}"'
-            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL ORDER BY (SELECT COUNT(*) FROM "{table_name}" t2 WHERE t2.{quoted_col} = t1.{quoted_col}) DESC'
+            query = f'SELECT {quoted_col} FROM "{table_name}" GROUP BY {quoted_col} ORDER BY COUNT(*) DESC'
             
             try:
                 results = dataset.query_database(database_name, query)
