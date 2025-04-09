@@ -89,18 +89,18 @@ python run.py \
 
 ### Output Format
 
-the prediction output `predictions.json` is saved in JSON format similar to the [BIRD](https://github.com/AlibabaResearch/DAMO-ConvAI/blob/main/bird/llm/exp_result/turbo_output/predict_dev.json) examples:
+the prediction output `predict.json` is saved in JSON format similar to the [BIRD](https://github.com/AlibabaResearch/DAMO-ConvAI/blob/main/bird/llm/exp_result/turbo_output/predict_dev.json) examples, key == `question_id` and value string with predicted SQL followed by `\t----- bird -----\t{db_id}`:
 
 ```
 {
-  "0": "SELECT MAX(`Percent (%) Eligible Free (K-12)`) FROM frpm WHERE `County Name` = 'Alameda'",
-  "1": "SELECT T1.`Percent (%) Eligible Free (Ages 5-17)` FROM frpm AS T1 WHERE T1.`Educational Option Type` = 'Continuation School' ORDER BY T1.`Percent (%) Eligible Free (Ages 5-17)` LIMIT 3",
-  "2": "SELECT T2.Zip FROM frpm AS T1 INNER JOIN schools AS T2 ON T1.CDSCode = T2.CDSCode WHERE T1.`Charter School (Y/N)` = 1 AND T1.`County Name` = 'Fresno'",
-  "3": "SELECT T1.MailStreet FROM schools AS T1 INNER JOIN frpm AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY T2.`FRPM Count (K-12)` DESC LIMIT 1",
-  "4": "SELECT T1.Phone FROM schools AS T1 INNER JOIN frpm AS T2 ON T1.CDSCode = T2.CDSCode WHERE T2.`Charter School (Y/N)` = 1 AND T2.CharterFundingType = 'Directly funded' AND T1.OpenDate > '2000-01-01'",
-  "5": "SELECT COUNT(*) FROM satscores INNER JOIN schools ON satscores.cds = schools.CDSCode WHERE satscores.AvgScrMath > 400 AND schools.Virtual = 'F';",
-  "6": "SELECT T1.School FROM schools AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds WHERE T2.NumTstTakr > 500 AND T1.Magnet = 1;",
-  "7": "SELECT T1.Phone FROM schools AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds ORDER BY T2.NumGE1500 DESC LIMIT 1;"
+  "0": "SELECT MAX(`Percent (%) Eligible Free (K-12)`)\nFROM frpm\nINNER JOIN schools ON frpm.CDSCode = schools.CDSCode\nWHERE schools.County = 'Alameda';\t----- bird -----\tcalifornia_schools",
+  "1": "SELECT T1.`Percent (%) Eligible Free (Ages 5-17)`\nFROM frpm AS T1\nINNER JOIN frpm AS T2 ON T1.CDSCode = T2.CDSCode\nWHERE T2.`Educational Option Type` = 'Continuation School'\nORDER BY T1.`Percent (%) Eligible Free (Ages 5-17)`\nLIMIT 3;\t----- bird -----\tcalifornia_schools",
+  "2": "-- No query possible with the given schema.\t----- bird -----\tcalifornia_schools",
+  "3": "SELECT T1.MailStreet FROM schools AS T1 INNER JOIN frpm AS T2 ON T1.CDSCode = T2.CDSCode ORDER BY T2.`FRPM Count (K-12)` DESC LIMIT 1\t----- bird -----\tcalifornia_schools",
+  "4": "SELECT T1.Phone FROM schools AS T1 LEFT JOIN frpm AS T2 ON T1.CDSCode = T2.CDSCode WHERE T2.`Charter School (Y/N)` = 'Y' AND T1.FundingType = 'Directly funded' AND DATE(T1.OpenDate) > '2000-01-01'\t----- bird -----\tcalifornia_schools",
+  "5": "SELECT COUNT(*) FROM satscores INNER JOIN schools ON satscores.cds = schools.CDSCode WHERE satscores.AvgScrMath > 400 AND schools.Virtual = 'F';\t----- bird -----\tcalifornia_schools",
+  "6": "SELECT T1.School FROM schools AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds WHERE T2.NumTstTakr > 500 AND T1.Magnet = 1;\t----- bird -----\tcalifornia_schools",
+  "7": "SELECT T1.Phone FROM schools AS T1 INNER JOIN satscores AS T2 ON T1.CDSCode = T2.cds ORDER BY T2.NumGE1500 DESC LIMIT 1;\t----- bird -----\tcalifornia_schools",
   ...
 }
 ```

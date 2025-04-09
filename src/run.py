@@ -924,7 +924,7 @@ def main():
         predictions[str(question_id)] = prediction + f"\t----- bird -----\t{db_id}"
     if len(predictions) != len(test_data):
         raise ValueError(f"predictions length ({len(predictions)}) does not match test data length ({len(test_data)})")
-    with open(os.path.join(args.output_path, "predictions.json"), "w") as f:
+    with open(os.path.join(args.output_path, "predict.json"), "w") as f:
         json.dump(predictions, f, indent=2)
 
     total_dict = {
