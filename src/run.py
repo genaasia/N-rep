@@ -890,6 +890,20 @@ def main():
             with open(os.path.join(rewritten_results_output_dir, f"{idx:04d}_messages.json"), "w") as f:
                 json.dump(rewrite_messages[idx], f, indent=2)
     
+       # Calculate and log rewrite statistics
+    total_sqls = sum(len(sqls) for sqls in sql_generation_results.values())
+    rewritten_sqls_count = 0
+    
+    for idx, original_sqls in sql_generation_results.items():
+        rewritten_sqls_list = rewritten_sqls.get(idx, [])
+        for i, original_sql in enumerate(original_sqls):
+            if i < len(rewritten_sqls_list) and rewritten_sqls_list[i] != original_sql:
+                rewritten_sqls_count += 1
+    
+    rewrite_percentage = (rewritten_sqls_count / total_sqls) * 100 if total_sqls > 0 else 0
+    logger.info(f"Rewrite statistics: {rewritten_sqls_count} out of {total_sqls} SQL queries needed rewriting ({rewrite_percentage:.2f}%)")
+    
+    
     # Save token counts for rewrite check
     save_token_counts(rewritten_results_output_dir, rewrite_counters)
     
