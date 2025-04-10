@@ -480,13 +480,13 @@ def main():
     parser.add_argument(
         "--embeddings-path",
         type=str,
-        default="./bird_data/valid_multi_table_queries_080425_embeddings.npy",
+        default="./bird_data/valid_multi_table_queries_embeddings.npy",
         help="path to preprocessed numpy embeddings file",
     )
     parser.add_argument(
         "--embeddings-data-path",
         type=str,
-        default="./bird_data/valid_multi_table_queries_080425.json",
+        default="./bird_data/valid_multi_table_queries.json",
         help="path to preprocessed json embeddings data file",
     )
     parser.add_argument(
@@ -517,8 +517,8 @@ def main():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=8,
-        help="number of workers to use for inference, default is 3",
+        default=4,
+        help="number of workers to use for inference, default is 4",
     )
     # make it a boolean
     parser.add_argument(
@@ -856,7 +856,7 @@ def main():
         return sql_generation_result
 
     sql_generation_results: dict = {}
-    with ThreadPoolExecutor(max_workers=min(4, args.num_workers)) as executor:
+    with ThreadPoolExecutor(max_workers=min(2, args.num_workers)) as executor:
         futures = [executor.submit(
             maybe_run_candidate_sql_generation, 
             idx, 
