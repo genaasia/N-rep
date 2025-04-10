@@ -243,7 +243,7 @@ def run_sql_generation(
     sql_prediction = extract_first_code_block(raw_prediction)
     if not sql_prediction:
         sql_prediction = raw_prediction
-    return sql_prediction
+    return sql_prediction, messages
 
 
 def run_candidate_sql_generation(
@@ -279,12 +279,15 @@ def run_candidate_sql_generation(
         except Exception as e:
             # handle e.g. the StopCandidateException due to RECITATION
             logger.warning(f"Error generating SQL: {type(e).__name__}: {str(e)}")
-            return ""
+            return "", []
 
     with ThreadPool(len(gen_args)) as pool:
-        candidate_sqls: list[str] = list(pool.imap(run_sql_generation_wrapper, gen_args))
+        results: list[tuple[str, list[str]]] = list(pool.imap(run_sql_generation_wrapper, gen_args))
+        # get candidate sqls and messages
+        candidate_sqls = [sql for sql, _ in results]
+        messages = [message for _, message in results]
 
-    return candidate_sqls
+    return candidate_sqls, messages
 
 
 def run_sql_rewrite(
@@ -292,7 +295,7 @@ def run_sql_rewrite(
     question: str,
     original_sql: str,
     schema_description: str,
-) -> str:
+) -> tuple[str, list[dict]]:
     """run the sql generation task"""
     # format messages
     message_formatter = RewritePromptFormatter(
@@ -308,7 +311,7 @@ def run_sql_rewrite(
     sql_prediction = extract_first_code_block(raw_prediction)
     if not sql_prediction:
         sql_prediction = raw_prediction
-    return sql_prediction
+    return sql_prediction, messages
 
 
 def check_need_rewrite(result):
@@ -328,18 +331,19 @@ def check_need_rewrite(result):
     return False
 
 
-def run_rewrite_check(sample: dict, predicted_sql: str, dataset: BaseDataset, generator: BaseGenerator, schema_manager: SchemaManager) -> str:
+def run_rewrite_check(sample: dict, predicted_sql: str, dataset: BaseDataset, generator: BaseGenerator, schema_manager: SchemaManager) -> tuple[str, list[dict]]:
     database = sample["db_id"]
     execution_result_dict: dict = dataset.validate_query(database, predicted_sql)
     execution_results: list[dict] = execution_result_dict.get("execution_result", [])
+    messages = []
     if check_need_rewrite(execution_results):
         try:
-            predicted_sql = run_sql_rewrite(generator, sample["question"], predicted_sql, schema_manager.get_full_schema(database, "mac_schema"))
+            predicted_sql, messages = run_sql_rewrite(generator, sample["question"], predicted_sql, schema_manager.get_full_schema(database, "mac_schema"))
             logger.debug(f"Rewritten SQL: {predicted_sql}")
         except Exception as e:
             logger.error(f"Error in run_sql_rewrite: {str(e)}")
 
-    return predicted_sql
+    return predicted_sql, messages
 
 
 def run_candidate_selection(
@@ -473,6 +477,13 @@ def main():
         type=int,
         default=8,
         help="number of workers to use for inference, default is 3",
+    )
+    # make it a boolean
+    parser.add_argument(
+        "--save-messages",
+        action="store_true",
+        default=False,
+        help="save messages to separate files for debugging",
     )
     args = parser.parse_args()
 
@@ -758,7 +769,7 @@ def main():
     
     cached_sql_generation_results: dict = {}
     for file in os.listdir(sql_generation_output_dir):
-        if file.endswith(".json") and file != "token_counts.json":
+        if file.endswith(".json") and file != "token_counts.json" and not file.endswith("_messages.json"):
             index = int(file.split(".")[0])
             with open(os.path.join(sql_generation_output_dir, file), "r") as f:
                 cached_sql_generation_results[index] = json.load(f)
@@ -776,8 +787,9 @@ def main():
         ) -> list[str]:
         if idx in cached_sql_generation_results:
             sql_generation_result: list[str] = cached_sql_generation_results[idx]
+            messages = []
         else:
-            sql_generation_result: list[str] = run_candidate_sql_generation(
+            sql_generation_result, messages = run_candidate_sql_generation(
                 sample=sample,
                 generator=generator,
                 candidate_configs=candidate_configs,
@@ -786,6 +798,9 @@ def main():
             )
         with open(os.path.join(sql_generation_output_dir, f"{idx:4d}.json"), "w") as f:
             json.dump(sql_generation_result, f, indent=2)
+        if messages and args.save_messages:
+            with open(os.path.join(sql_generation_output_dir, f"{idx:4d}_messages.json"), "w") as f:
+                json.dump(messages, f, indent=2)
         return sql_generation_result
 
     sql_generation_results: dict = {}
@@ -821,7 +836,7 @@ def main():
     
     cached_rewritten_results: dict = {}
     for file in os.listdir(rewritten_results_output_dir):
-        if file.endswith(".json") and file != "token_counts.json":
+        if file.endswith(".json") and file != "token_counts.json" and not file.endswith("_messages.json"):
             index = int(file.split(".")[0])
             with open(os.path.join(rewritten_results_output_dir, file), "r") as f:
                 cached_rewritten_results[index] = json.load(f)
@@ -839,33 +854,55 @@ def main():
         idx, sql_idx, sql = params
         sample = test_data[idx]
         try:
-            rewritten_sql = run_rewrite_check(
+            rewritten_sql, messages = run_rewrite_check(
                 sample=sample,
                 predicted_sql=sql,
                 dataset=dataset,
                 generator=gcp_generator_candidate,
                 schema_manager=schema_manager
             )
-            return idx, sql_idx, rewritten_sql
+            return idx, sql_idx, rewritten_sql, messages
         except Exception as e:
             logger.error(f"Error in rewrite check for idx {idx}, sql_idx {sql_idx}: {str(e)}")
-            return idx, sql_idx, sql  # Return original SQL if rewrite fails
+            return idx, sql_idx, sql, []  # Return original SQL if rewrite fails
     
     # Run rewrite check in parallel
     rewritten_sqls = {}
+    rewrite_messages = {}
     if flattened_sqls:
         with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
             futures = [executor.submit(run_rewrite_check_wrapper, params) for params in flattened_sqls]
             for future in tqdm.tqdm(futures, total=len(flattened_sqls), desc="Running rewrite check"):
-                idx, sql_idx, rewritten_sql = future.result()
+                idx, sql_idx, rewritten_sql, messages = future.result()
                 if idx not in rewritten_sqls:
                     rewritten_sqls[idx] = [""] * len(sql_generation_results[idx])
+                    rewrite_messages[idx] = [[] for _ in range(len(sql_generation_results[idx]))]
                 rewritten_sqls[idx][sql_idx] = rewritten_sql
+                rewrite_messages[idx][sql_idx] = messages
     
     # Save rewritten results
     for idx, rewritten_sql_list in rewritten_sqls.items():
         with open(os.path.join(rewritten_results_output_dir, f"{idx:04d}.json"), "w") as f:
             json.dump(rewritten_sql_list, f, indent=2)
+        
+        # Save messages if enabled
+        if args.save_messages and idx in rewrite_messages:
+            with open(os.path.join(rewritten_results_output_dir, f"{idx:04d}_messages.json"), "w") as f:
+                json.dump(rewrite_messages[idx], f, indent=2)
+    
+       # Calculate and log rewrite statistics
+    total_sqls = sum(len(sqls) for sqls in sql_generation_results.values())
+    rewritten_sqls_count = 0
+    
+    for idx, original_sqls in sql_generation_results.items():
+        rewritten_sqls_list = rewritten_sqls.get(idx, [])
+        for i, original_sql in enumerate(original_sqls):
+            if i < len(rewritten_sqls_list) and rewritten_sqls_list[i] != original_sql:
+                rewritten_sqls_count += 1
+    
+    rewrite_percentage = (rewritten_sqls_count / total_sqls) * 100 if total_sqls > 0 else 0
+    logger.info(f"Rewrite statistics: {rewritten_sqls_count} out of {total_sqls} SQL queries needed rewriting ({rewrite_percentage:.2f}%)")
+    
     
     # Save token counts for rewrite check
     save_token_counts(rewritten_results_output_dir, rewrite_counters)
