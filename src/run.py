@@ -403,7 +403,7 @@ def run_candidate_selection(
     for sql_query in candidate_sqls:
         execution_result_dict: dict = dataset.validate_query(database, sql_query)
         execution_results: list[dict] = execution_result_dict.get("execution_result", [])
-        is_valid = execution_result_dict.get("success", False)
+        is_valid = execution_result_dict.get("validated", False)
 
         sample_dicts.append(
             {
