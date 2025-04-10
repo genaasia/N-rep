@@ -19,6 +19,7 @@ from loguru import logger
 from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 
 from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
+from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder
 from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator
 from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
@@ -26,6 +27,7 @@ from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.prompts.formatters import RewritePromptFormatter
 from text2sql.engine.retrieval import LocalRetriever
 from text2sql.engine.generation.postprocessing import extract_first_code_block
+from text2sql.utils.postprocess import get_table_names_from_query
 from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens, CharacterCounter, TokenCounter
 
 from text2sql.pipeline.selection import select_best_candidate
@@ -331,19 +333,59 @@ def check_need_rewrite(result):
     return False
 
 
+def get_filtered_schema_description_for_rewrite(db_name, schema, prediction):
+        table_names = get_table_names_from_query(prediction)
+        filtered_schema = {"tables": {}}
+        for table_name in table_names:
+            table_name = table_name.lower()
+            if table_name in schema["tables"]:
+                filtered_schema["tables"][table_name] = schema["tables"][table_name]
+        return schema_to_datagrip_format(db_name, filtered_schema)
+
+
 def run_rewrite_check(sample: dict, predicted_sql: str, dataset: BaseDataset, generator: BaseGenerator, schema_manager: SchemaManager) -> tuple[str, list[dict]]:
     database = sample["db_id"]
-    execution_result_dict: dict = dataset.validate_query(database, predicted_sql)
-    execution_results: list[dict] = execution_result_dict.get("execution_result", [])
-    messages = []
-    if check_need_rewrite(execution_results):
+    max_retries = 3
+    attempt = 0
+    current_sql = predicted_sql
+    all_messages = []
+    
+    while attempt < max_retries:
+        # Check current SQL execution
+        execution_result_dict: dict = dataset.validate_query(database, current_sql)
+        execution_results: list[dict] = execution_result_dict.get("execution_result", [])
+        
+        # If no rewrite needed, return current SQL
+        if not check_need_rewrite(execution_results):
+            return current_sql, all_messages
+            
+        # Get filtered schema for rewrite
+        filtered_schema_description = get_filtered_schema_description_for_rewrite(
+            database,
+            schema_manager.get_schema_mapping(database), 
+            current_sql
+        )
+        
         try:
-            predicted_sql, messages = run_sql_rewrite(generator, sample["question"], predicted_sql, schema_manager.get_full_schema(database, "mac_schema"))
-            logger.debug(f"Rewritten SQL: {predicted_sql}")
+            # Attempt rewrite
+            rewritten_sql, messages = run_sql_rewrite(
+                generator, 
+                sample["question"], 
+                current_sql, 
+                filtered_schema_description
+            )
+            all_messages.extend(messages)
+            
+            current_sql = rewritten_sql
+            logger.debug(f"Rewrite attempt {attempt + 1}, SQL: {current_sql}")
+            
         except Exception as e:
-            logger.error(f"Error in run_sql_rewrite: {str(e)}")
+            logger.error(f"Error in run_sql_rewrite attempt {attempt + 1}: {str(e)}")
+            break
+            
+        attempt += 1
 
-    return predicted_sql, messages
+    return current_sql, all_messages
 
 
 def run_candidate_selection(
@@ -662,6 +704,16 @@ def main():
         ) -> dict:
         if idx in cached_schema_linking_results:
             schema_linking_result = cached_schema_linking_results[idx]
+            # DENI HACK
+            # for model in schema_linking_result.keys():
+            #     for mode in schema_linking_result[model].keys():
+            #         vals = schema_linking_result[model][mode]
+            #         column_description = schema_manager.get_filtered_schema(sample["db_id"], vals["column_linking"], mode)
+            #         table_description = schema_manager.get_filtered_schema(sample["db_id"], vals["table_linking"], mode)
+            #         schema_linking_result[model][mode]["column_description"] = column_description
+            #         schema_linking_result[model][mode]["table_description"] = table_description
+            # with open(os.path.join(schema_linking_output_dir, f"{idx:4d}.json"), "w") as f:
+            #     json.dump(schema_linking_result, f, indent=2)
         else:
             schema_linking_result = run_candidate_schema_linking(
                 sample, 
@@ -708,7 +760,7 @@ def main():
     _embeddings = None
     if os.path.isfile(os.path.join(embedding_output_dir, "embeddings.npy")):
         _embeddings = np.load(os.path.join(embedding_output_dir, "embeddings.npy"))
-    if _embeddings is not None and len(_embeddings) == len(test_data):
+    if _embeddings is not None and len(_embeddings) >= len(test_data):
         embeddings = _embeddings.tolist()
         logger.info(f"Loaded cached embeddings of size ({np.array(embeddings).shape})")
     else:
@@ -721,6 +773,8 @@ def main():
             logger.info("Processing questions...")
             test_questions = [sample["question"] for sample in test_data]
             masked_questions = [replace_entities_with_tokens(question) for question in tqdm.tqdm(test_questions)]
+            print(f"{len(test_questions)=}")
+            print(f"{len(masked_questions)=}")
             with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "w") as f:
                 f.write("\n".join(masked_questions))
         logger.info("Embedding processed questions...")
