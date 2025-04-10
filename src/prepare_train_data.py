@@ -133,7 +133,7 @@ def get_filtered_schema_txt(
     mac_schema_text = schema_manager.get_filtered_schema(db_id, table_map, "mac_schema")
 
     return {
-        "sql_create": sql_create_text,
+        "sql": sql_create_text,
         "m_schema": m_schema_text,
         "mac_schema": mac_schema_text,
     }
