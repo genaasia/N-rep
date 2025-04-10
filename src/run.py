@@ -708,16 +708,6 @@ def main():
         ) -> dict:
         if idx in cached_schema_linking_results:
             schema_linking_result = cached_schema_linking_results[idx]
-            # DENI HACK
-            # for model in schema_linking_result.keys():
-            #     for mode in schema_linking_result[model].keys():
-            #         vals = schema_linking_result[model][mode]
-            #         column_description = schema_manager.get_filtered_schema(sample["db_id"], vals["column_linking"], mode)
-            #         table_description = schema_manager.get_filtered_schema(sample["db_id"], vals["table_linking"], mode)
-            #         schema_linking_result[model][mode]["column_description"] = column_description
-            #         schema_linking_result[model][mode]["table_description"] = table_description
-            # with open(os.path.join(schema_linking_output_dir, f"{idx:4d}.json"), "w") as f:
-            #     json.dump(schema_linking_result, f, indent=2)
         else:
             schema_linking_result = run_candidate_schema_linking(
                 sample, 
@@ -779,8 +769,6 @@ def main():
             logger.info("Processing questions...")
             test_questions = [sample["question"] for sample in test_data]
             masked_questions = [replace_entities_with_tokens(question) for question in tqdm.tqdm(test_questions)]
-            print(f"{len(test_questions)=}")
-            print(f"{len(masked_questions)=}")
             with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "w") as f:
                 f.write("\n".join(masked_questions))
         logger.info("Embedding processed questions...")
