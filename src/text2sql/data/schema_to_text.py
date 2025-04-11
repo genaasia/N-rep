@@ -316,33 +316,42 @@ def get_mac_schema_column_samples(
                 except Exception:
                     continue
             
-            # Get distinct values
+            # Get ALL distinct values first, sorted by frequency - EXACTLY as in agents.py
             quoted_col = f'"{col_name}"'
-            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL LIMIT {max_examples}'
+            query = f'SELECT {quoted_col} FROM "{table_name}" GROUP BY {quoted_col} ORDER BY COUNT(*) DESC'
             
             try:
                 results = dataset.query_database(database_name, query)
                 col_samples = []
                 
+                # Process all values first before applying filters
                 for row in results:
                     if col_name in row and row[col_name] is not None:
                         value = str(row[col_name]).strip()
                         if value:
-                            # For text columns, filter out URLs and emails
-                            if col_type.upper() in ['TEXT', 'VARCHAR']:
-                                if 'https://' in value or 'http://' in value:
-                                    continue
-                                if len(value) > 50:
-                                    continue
                             col_samples.append(value)
                 
-                # For date columns, only take one example
-                if col_type.upper() in ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP']:
-                    col_samples = col_samples[:1]
-                
-                # Store the samples if we have any
+                # Apply filters to ALL values, not just the first N
                 if col_samples:
-                    samples[table_name][col_name] = col_samples
+                    # For text columns, filter out URLs and emails
+                    if col_type.upper() in ['TEXT', 'VARCHAR']:
+                        filtered_samples = []
+                        for value in col_samples:
+                            if 'https://' in value or 'http://' in value:
+                                continue
+                            if len(value) > 50:
+                                continue
+                            filtered_samples.append(value)
+                        col_samples = filtered_samples
+                    
+                    # For date columns, only take one example
+                    if col_type.upper() in ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP']:
+                        col_samples = col_samples[:1]
+                    
+                    # Store the samples if we have any
+                    if col_samples:
+                        # Only take up to max_examples after all filtering
+                        samples[table_name][col_name] = col_samples[:max_examples]
                     
             except Exception as e:
                 print(f"Warning: Could not get samples for column {col_name} in table {table_name}: {str(e)}")

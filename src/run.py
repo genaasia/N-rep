@@ -480,13 +480,13 @@ def main():
     parser.add_argument(
         "--embeddings-path",
         type=str,
-        default="./bird_data/valid_multi_table_queries_080425_embeddings.npy",
+        default="./bird_data/valid_multi_table_queries_embeddings.npy",
         help="path to preprocessed numpy embeddings file",
     )
     parser.add_argument(
         "--embeddings-data-path",
         type=str,
-        default="./bird_data/valid_multi_table_queries_080425.json",
+        default="./bird_data/valid_multi_table_queries.json",
         help="path to preprocessed json embeddings data file",
     )
     parser.add_argument(
@@ -517,8 +517,8 @@ def main():
     parser.add_argument(
         "--num-workers",
         type=int,
-        default=8,
-        help="number of workers to use for inference, default is 3",
+        default=4,
+        help="number of workers to use for inference, default is 4",
     )
     # make it a boolean
     parser.add_argument(
@@ -655,7 +655,9 @@ def main():
     p = gcp_generator_candidate.generate(test_messages, temperature=0.0)
     logger.info(f"Gemini generator test response: '{p}'")
 
+    #############################
     # preprocessing
+    #############################
     dataset, schema_manager = prepare_dataset_information(args.test_database_path, args.test_tables_json_path)
     retriever = prepare_fewshot_retriever(args.embeddings_path, args.embeddings_data_path)
 
@@ -669,7 +671,9 @@ def main():
         logger.remove()
         logger.add(sys.stderr, level="INFO")
 
-    # run schema linking
+    #############################
+    # schema linking
+    #############################
     # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
     os.makedirs(schema_linking_output_dir, exist_ok=True)
@@ -704,16 +708,6 @@ def main():
         ) -> dict:
         if idx in cached_schema_linking_results:
             schema_linking_result = cached_schema_linking_results[idx]
-            # DENI HACK
-            # for model in schema_linking_result.keys():
-            #     for mode in schema_linking_result[model].keys():
-            #         vals = schema_linking_result[model][mode]
-            #         column_description = schema_manager.get_filtered_schema(sample["db_id"], vals["column_linking"], mode)
-            #         table_description = schema_manager.get_filtered_schema(sample["db_id"], vals["table_linking"], mode)
-            #         schema_linking_result[model][mode]["column_description"] = column_description
-            #         schema_linking_result[model][mode]["table_description"] = table_description
-            # with open(os.path.join(schema_linking_output_dir, f"{idx:4d}.json"), "w") as f:
-            #     json.dump(schema_linking_result, f, indent=2)
         else:
             schema_linking_result = run_candidate_schema_linking(
                 sample, 
@@ -746,7 +740,9 @@ def main():
     del cached_schema_linking_results
     logger.info("Schema linking complete")
 
-    # run embeddings
+    #############################
+    # question embedding
+    #############################
     embedding_output_dir = os.path.join(args.output_path, "2_embeddings")
     os.makedirs(embedding_output_dir, exist_ok=True)
     
@@ -764,7 +760,7 @@ def main():
         embeddings = _embeddings.tolist()
         logger.info(f"Loaded cached embeddings of size ({np.array(embeddings).shape})")
     else:
-        logger.info("Generating embeddings...")
+        logger.info("Generating embeddings:")
         # try to load processed questions
         if os.path.isfile(os.path.join(embedding_output_dir, "masked_questions.txt")):
             with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "r") as f:
@@ -773,8 +769,6 @@ def main():
             logger.info("Processing questions...")
             test_questions = [sample["question"] for sample in test_data]
             masked_questions = [replace_entities_with_tokens(question) for question in tqdm.tqdm(test_questions)]
-            print(f"{len(test_questions)=}")
-            print(f"{len(masked_questions)=}")
             with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "w") as f:
                 f.write("\n".join(masked_questions))
         logger.info("Embedding processed questions...")
@@ -786,7 +780,9 @@ def main():
     
     logger.info(f"Embeddings of size ({np.array(embeddings).shape}) complete")
     
-    # run fewshot retrieval
+    #############################
+    # few-shot retrieval
+    #############################
     fewshot_retrieval_output_dir = os.path.join(args.output_path, "3_fewshot_retrieval")
     os.makedirs(fewshot_retrieval_output_dir, exist_ok=True)
     
@@ -811,7 +807,9 @@ def main():
     del cached_fewshot_retrieval_results
     logger.info("Fewshot retrieval complete")
 
-    # run sql generation
+    #############################
+    # sql candidate generation
+    #############################
     sql_generation_output_dir = os.path.join(args.output_path, "4_sql_generation")
     os.makedirs(sql_generation_output_dir, exist_ok=True)
     
@@ -858,7 +856,7 @@ def main():
         return sql_generation_result
 
     sql_generation_results: dict = {}
-    with ThreadPoolExecutor(max_workers=min(4, args.num_workers)) as executor:
+    with ThreadPoolExecutor(max_workers=min(2, args.num_workers)) as executor:
         futures = [executor.submit(
             maybe_run_candidate_sql_generation, 
             idx, 
@@ -878,7 +876,9 @@ def main():
     del cached_sql_generation_results
     logger.info("Sql generation complete")
 
-    # run rewrite check
+    #############################
+    # rewriting
+    #############################
     rewritten_results_output_dir = os.path.join(args.output_path, "5_rewritten_results")
     os.makedirs(rewritten_results_output_dir, exist_ok=True)
     
@@ -963,7 +963,9 @@ def main():
     
     logger.info("Rewrite check complete")
 
-    # run candidate selection
+    #############################
+    # candidate selection
+    #############################
     candidate_selection_output_dir = os.path.join(args.output_path, "6_candidate_selection")
     os.makedirs(candidate_selection_output_dir, exist_ok=True)
     
@@ -1006,6 +1008,9 @@ def main():
     
     logger.info("Candidate selection complete")
 
+    #############################
+    # output saving
+    #############################
     # check idx == question_id and add \t----- bird -----\t<db_id>
     predictions = {}
     for idx in range(len(candidate_selection_results)):

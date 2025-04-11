@@ -15,6 +15,7 @@ maintainers:
 ├── requirements.txt
 └── /src
     ├── /bird_data            : BIRD-specific data for benchmark submission
+    ├── prepare_train_data.py : prepare train data for few-shot
     ├── run.py                : main inference script
     └── /text2sql             : text-to-SQL component module
         ├── /data             : database access functions (this fork only supports SQLite)
@@ -111,9 +112,16 @@ a `token_counts.json` file is also saved, with information about token usage.
 
 ### BIRD train data preprocessing
 
-we use the BIRD train data as few-shot context. we have included pre-processed data in this repo, but you may examine the code and execute it if needed:
+we use the BIRD train data as few-shot context. we have included pre-processed data in this repo, but you may examine the code and execute it if needed to pre-process train data and create embeddings:
 
-***todo: @denizay***
+```
+python prepare_train_data.py \
+  --train-databases-path /data/sql_datasets/bird/train/train_databases \
+  --train-data-path /data/sql_datasets/bird/train/train.json \
+  --tables-json-path /data/sql_datasets/bird/train/train_tables.json \
+  --output-path /data/outputs/valid_multi_table_queries.json \
+  --max-processes 4
+```
 
 ### Evaluation
 

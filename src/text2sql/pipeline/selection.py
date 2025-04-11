@@ -310,7 +310,14 @@ def select_best_candidate(
         raise ValueError("generator is required for chase voting")
 
     predicted_valids = [item for item in predictions if item["valid"]]
-    prediction_votes = get_votes(predictions)
+
+    if not predicted_valids:
+        if len(predictions) > 0:
+            return predictions[0]["sql"]
+        else:
+            return "SELECT 1"
+
+    prediction_votes = get_votes(predicted_valids)
     max_vote_sql, values = max(prediction_votes.items(), key=lambda x: x[1]["vote_count"])
 
     if not chase:
