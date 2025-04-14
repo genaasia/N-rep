@@ -88,7 +88,6 @@ class AzureEmbedder(BaseEmbedder):
         batch_size: int = 8,
         max_chars: int = 1024,
         sleep_ms: int = 0,
-        counter: CharacterCounter | None = None,
         **kwargs,
     ):
         """embed texts using Azure OpenAI API
@@ -103,7 +102,7 @@ class AzureEmbedder(BaseEmbedder):
             sleep_ms (int, optional): sleep time in ms. Defaults to 0.
             kwargs: additional azure client specific arguments
         """
-        super().__init__(batch_size=batch_size, max_chars=max_chars, sleep_ms=sleep_ms, counter=counter)
+        super().__init__(batch_size=batch_size, max_chars=max_chars, sleep_ms=sleep_ms)
         self.api_key = api_key
         self.api_version = api_version
         self.azure_endpoint = azure_endpoint
@@ -137,7 +136,6 @@ class BedrockCohereEmbedder(BaseEmbedder):
         batch_size: int = 8,
         max_chars: int = 1024,
         sleep_ms: int = 0,
-        counter: CharacterCounter | None = None,
     ):
         """embed texts using Cohere embeddings on Amazon Bedrock API
 
@@ -151,7 +149,7 @@ class BedrockCohereEmbedder(BaseEmbedder):
             max_chars (int, optional): max chars. Defaults to 1024.
             sleep_ms (int, optional): sleep time in ms. Defaults to 0.
         """
-        super().__init__(batch_size=batch_size, max_chars=max_chars, sleep_ms=sleep_ms, counter=counter)
+        super().__init__(batch_size=batch_size, max_chars=max_chars, sleep_ms=sleep_ms)
         self.region_name = region_name
         self.service_name = service_name
         self.model = model
