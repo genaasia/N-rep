@@ -716,7 +716,7 @@ def main():
                 azure_linker_token_counter, 
                 gcp_linker_token_counter,
             )
-            with open(os.path.join(schema_linking_output_dir, f"{question_id:4d}.json"), "w") as f:
+            with open(os.path.join(schema_linking_output_dir, f"{question_id:04d}.json"), "w") as f:
                 json.dump(schema_linking_result, f, indent=2)
         return dict(schema_linking_result)
     
@@ -804,7 +804,7 @@ def main():
         else:
             fewshot_retrieval_result: list[dict] = run_fewshot_retrieval(embeddings[idx], retriever, top_k=top_k)
         fewshot_retrieval_results[question_id] = fewshot_retrieval_result
-        with open(os.path.join(fewshot_retrieval_output_dir, f"{question_id:4d}.json"), "w") as f:
+        with open(os.path.join(fewshot_retrieval_output_dir, f"{question_id:04d}.json"), "w") as f:
             json.dump(fewshot_retrieval_result, f, indent=2)
     del cached_fewshot_retrieval_results
     logger.info("Fewshot retrieval complete")
@@ -850,10 +850,10 @@ def main():
                 schema_linking_outputs=schema_linking_outputs,
                 few_shot_results=few_shot_results,
             )
-        with open(os.path.join(sql_generation_output_dir, f"{question_id:4d}.json"), "w") as f:
+        with open(os.path.join(sql_generation_output_dir, f"{question_id:04d}.json"), "w") as f:
             json.dump(sql_generation_result, f, indent=2)
         if messages and args.save_messages:
-            with open(os.path.join(sql_generation_output_dir, f"{question_id:4d}_messages.json"), "w") as f:
+            with open(os.path.join(sql_generation_output_dir, f"{question_id:04d}_messages.json"), "w") as f:
                 json.dump(messages, f, indent=2)
         return sql_generation_result
 
@@ -1007,7 +1007,7 @@ def main():
                 chase=True,
             )
         candidate_selection_results[question_id] = candidate_selection_result
-        with open(os.path.join(candidate_selection_output_dir, f"{question_id:4d}.txt"), "w") as f:
+        with open(os.path.join(candidate_selection_output_dir, f"{question_id:04d}.txt"), "w") as f:
             f.write(candidate_selection_result)
     
     # Save token counts for candidate selection
