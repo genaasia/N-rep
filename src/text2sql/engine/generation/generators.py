@@ -24,7 +24,7 @@ STATUS_OK = "ok"
 class TokenUsage(BaseModel):
     """token usage for a single generation call"""
 
-    cached_tokens: int | None
+    cached_tokens: int = 0
     prompt_tokens: int
     output_tokens: int
     total_tokens: int
@@ -33,6 +33,7 @@ class TokenUsage(BaseModel):
 class GenerationResult(BaseModel):
     """result of a single generation call"""
 
+    model: str
     text: str
     tokens: TokenUsage
     inf_time_ms: int
@@ -90,7 +91,7 @@ class AzureGenerator(BaseGenerator):
         ):
             cached_tokens = chat_completion.usage.prompt_tokens_details.cached_tokens
         else:
-            cached_tokens = None
+            cached_tokens = 0
         token_usage = TokenUsage(
             cached_tokens=cached_tokens,
             prompt_tokens=chat_completion.usage.prompt_tokens,
@@ -101,7 +102,7 @@ class AzureGenerator(BaseGenerator):
         # postprocessing
         text = self.post_func(chat_completion.choices[0].message.content)
         inf_time_ms = int((end_time - start_time) * 1000)
-        return GenerationResult(text=text, tokens=token_usage, inf_time_ms=inf_time_ms)
+        return GenerationResult(model=self.model, text=text, tokens=token_usage, inf_time_ms=inf_time_ms)
 
 
 class BedrockGenerator(BaseGenerator):
@@ -145,14 +146,18 @@ class BedrockGenerator(BaseGenerator):
         end_time = time.time()
 
         # get token usage
+        cached_tokens = response["usage"]["cachedReadInputTokens"]
+        if cached_tokens is None:
+            cached_tokens = 0
         token_usage = TokenUsage(
-            cached_tokens=response["usage"]["cachedReadInputTokens"],
+            cached_tokens=cached_tokens,
             prompt_tokens=response["usage"]["inputTokens"],
             output_tokens=response["usage"]["outputTokens"],
             total_tokens=response["usage"]["totalTokens"],
         )
 
         return GenerationResult(
+            model=self.model,
             text=self.post_func(response["output"]["message"]["content"][-1]["text"]),
             tokens=token_usage,
             inf_time_ms=int((end_time - start_time) * 1000),
@@ -210,10 +215,10 @@ class GCPGenerator(BaseGenerator):
             total_tokens = result.usage_metadata.total_token_count
             status = STATUS_OK
         else:
-            cached_tokens = None
-            prompt_tokens = -1
-            output_tokens = -1
-            total_tokens = -1
+            cached_tokens = 0
+            prompt_tokens = 0
+            output_tokens = 0
+            total_tokens = 0
             status = "error: no usage metadata"
         token_usage = TokenUsage(
             cached_tokens=cached_tokens,
@@ -222,6 +227,7 @@ class GCPGenerator(BaseGenerator):
             total_tokens=total_tokens,
         )
         return GenerationResult(
+            model=self.model,
             text=self.post_func(result.text),
             tokens=token_usage,
             inf_time_ms=int((end_time - start_time) * 1000),
@@ -268,7 +274,7 @@ class OpenAIGenerator(BaseGenerator):
         ):
             cached_tokens = chat_completion.usage.prompt_tokens_details.cached_tokens
         else:
-            cached_tokens = None
+            cached_tokens = 0
         token_usage = TokenUsage(
             cached_tokens=cached_tokens,
             prompt_tokens=chat_completion.usage.prompt_tokens,
@@ -279,4 +285,4 @@ class OpenAIGenerator(BaseGenerator):
         # postprocessing
         text = self.post_func(chat_completion.choices[0].message.content)
         inf_time_ms = int((end_time - start_time) * 1000)
-        return GenerationResult(text=text, tokens=token_usage, inf_time_ms=inf_time_ms)
+        return GenerationResult(model=self.model, text=text, tokens=token_usage, inf_time_ms=inf_time_ms)
