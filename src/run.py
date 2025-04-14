@@ -20,7 +20,7 @@ from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 
 from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
 from text2sql.data.schema_to_text import schema_to_datagrip_format
-from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder
+from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder, EmbeddingResult
 from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator
 from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
 from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
@@ -28,7 +28,7 @@ from text2sql.engine.prompts.formatters import RewritePromptFormatter
 from text2sql.engine.retrieval import LocalRetriever
 from text2sql.engine.generation.postprocessing import extract_first_code_block
 from text2sql.utils.postprocess import get_table_names_from_query
-from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens, CharacterCounter, TokenCounter
+from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens
 
 from text2sql.pipeline.selection import select_best_candidate
 
@@ -132,8 +132,6 @@ def run_candidate_schema_linking(
     sample: dict,
     candidate_configs: list[dict],
     schema_manager: SchemaManager,
-    azure_linker_token_counter: TokenCounter,
-    gcp_linker_token_counter: TokenCounter,
 ) -> defaultdict:
     """run schema linking for all candidate configs
 
@@ -160,13 +158,11 @@ def run_candidate_schema_linking(
                     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
                     azure_endpoint=os.getenv("AZURE_OPENAI_API_ENDPOINT"),
                     api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                    counter=azure_linker_token_counter,
                 )
             elif schema_linking_generator_name == "gcp":
                 schema_linking_generator = GCPGenerator(
                     model=schema_linking_model,
                     api_key=os.getenv("GCP_KEY"),
-                    counter=gcp_linker_token_counter,
                 )
             else:
                 raise ValueError(f"Invalid generator: {schema_linking_generator_name}")
@@ -334,55 +330,52 @@ def check_need_rewrite(result):
 
 
 def get_filtered_schema_description_for_rewrite(db_name, schema, prediction):
-        table_names = get_table_names_from_query(prediction)
-        filtered_schema = {"tables": {}}
-        for table_name in table_names:
-            table_name = table_name.lower()
-            if table_name in schema["tables"]:
-                filtered_schema["tables"][table_name] = schema["tables"][table_name]
-        return schema_to_datagrip_format(db_name, filtered_schema)
+    table_names = get_table_names_from_query(prediction)
+    filtered_schema = {"tables": {}}
+    for table_name in table_names:
+        table_name = table_name.lower()
+        if table_name in schema["tables"]:
+            filtered_schema["tables"][table_name] = schema["tables"][table_name]
+    return schema_to_datagrip_format(db_name, filtered_schema)
 
 
-def run_rewrite_check(sample: dict, predicted_sql: str, dataset: BaseDataset, generator: BaseGenerator, schema_manager: SchemaManager) -> tuple[str, list[dict]]:
+def run_rewrite_check(
+    sample: dict, predicted_sql: str, dataset: BaseDataset, generator: BaseGenerator, schema_manager: SchemaManager
+) -> tuple[str, list[dict]]:
     database = sample["db_id"]
     max_retries = 3
     attempt = 0
     current_sql = predicted_sql
     all_messages = []
-    
+
     while attempt < max_retries:
         # Check current SQL execution
         execution_result_dict: dict = dataset.validate_query(database, current_sql)
         execution_results: list[dict] = execution_result_dict.get("execution_result", [])
-        
+
         # If no rewrite needed, return current SQL
         if not check_need_rewrite(execution_results):
             return current_sql, all_messages
-            
+
         # Get filtered schema for rewrite
         filtered_schema_description = get_filtered_schema_description_for_rewrite(
-            database,
-            schema_manager.get_schema_mapping(database), 
-            current_sql
+            database, schema_manager.get_schema_mapping(database), current_sql
         )
-        
+
         try:
             # Attempt rewrite
             rewritten_sql, messages = run_sql_rewrite(
-                generator, 
-                sample["question"], 
-                current_sql, 
-                filtered_schema_description
+                generator, sample["question"], current_sql, filtered_schema_description
             )
             all_messages.extend(messages)
-            
+
             current_sql = rewritten_sql
             logger.debug(f"Rewrite attempt {attempt + 1}, SQL: {current_sql}")
-            
+
         except Exception as e:
             logger.error(f"Error in run_sql_rewrite attempt {attempt + 1}: {str(e)}")
             break
-            
+
         attempt += 1
 
     return current_sql, all_messages
@@ -423,38 +416,6 @@ def run_candidate_selection(
         chase=chase,
     )
     return best_sql
-
-
-def save_token_counts(output_dir: str, counters: dict) -> None:
-    """Save token counts to a JSON file in the specified directory.
-    
-    Args:
-        output_dir: Directory to save the token counts
-        counters: Dictionary of counters to save
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    counts_file = os.path.join(output_dir, "token_counts.json")
-    counts = {name: counter.get_counts() for name, counter in counters.items()}
-    with open(counts_file, "w") as f:
-        json.dump(counts, f, indent=2)
-    logger.info(f"Saved token counts to {counts_file}")
-
-
-def load_token_counts(output_dir: str, counters: dict) -> None:
-    """Load token counts from a JSON file in the specified directory.
-    
-    Args:
-        output_dir: Directory containing the token counts
-        counters: Dictionary of counters to update
-    """
-    counts_file = os.path.join(output_dir, "token_counts.json")
-    if os.path.exists(counts_file):
-        with open(counts_file, "r") as f:
-            counts = json.load(f)
-        for name, counter in counters.items():
-            if name in counts:
-                counter.update_counts(counts[name])
-        logger.info(f"Loaded token counts from {counts_file}")
 
 
 def main():
@@ -611,20 +572,12 @@ def main():
     else:
         column_meaning_json = {}
 
-    # counters for tracking usage
-    cohere_character_counter = CharacterCounter()
-    azure_linker_token_counter = TokenCounter()
-    gcp_linker_token_counter = TokenCounter()
-    gcp_candidate_token_counter = TokenCounter() 
-    gcp_selection_token_counter = TokenCounter()
-
     # create generators
     logger.info("Creating embedder...")
     embedder = BedrockCohereEmbedder(
         model=os.getenv("AWS_MODEL_NAME"),
         region_name=os.getenv("AWS_REGION_NAME"),
         input_type=os.getenv("AWS_INPUT_TYPE"),
-        counter=cohere_character_counter,
         sleep_ms=10,
     )
 
@@ -644,12 +597,10 @@ def main():
     gcp_generator_candidate = GCPGenerator(
         model="gemini-1.5-flash",
         api_key=os.getenv("GCP_KEY"),
-        counter=gcp_candidate_token_counter,
     )
     gcp_generator_selection = GCPGenerator(
         model="gemini-1.5-flash",
         api_key=os.getenv("GCP_KEY"),
-        counter=gcp_selection_token_counter,
     )
 
     p = gcp_generator_candidate.generate(test_messages, temperature=0.0)
@@ -677,14 +628,7 @@ def main():
     # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
     os.makedirs(schema_linking_output_dir, exist_ok=True)
-    
-    # Load token counts for schema linking
-    schema_linking_counters = {
-        "azure_linker": azure_linker_token_counter,
-        "gcp_linker": gcp_linker_token_counter
-    }
-    load_token_counts(schema_linking_output_dir, schema_linking_counters)
-    
+
     cached_schema_linking_results: dict = {}
     for file in os.listdir(schema_linking_output_dir):
         if file.endswith(".json") and file != "token_counts.json":
@@ -694,48 +638,43 @@ def main():
                 cached_schema_linking_results[index] = json.load(f)
     logger.info(f"Loaded {len(cached_schema_linking_results)} cached schema linking results")
     logger.info(f"Running schema linking for {len(test_data)-len(cached_schema_linking_results)} samples")
-    
+
     # run schema linking for each sample, with threading executor
     schema_linking_outputs: dict = {}
+
     def maybe_run_candidate_schema_linking(
-            idx, 
-            cached_schema_linking_results, 
-            sample, 
-            candidate_configs, 
-            schema_manager, 
-            azure_linker_token_counter, 
-            gcp_linker_token_counter
-        ) -> dict:
+        idx,
+        cached_schema_linking_results,
+        sample,
+        candidate_configs,
+        schema_manager,
+    ) -> dict:
         if idx in cached_schema_linking_results:
             schema_linking_result = cached_schema_linking_results[idx]
         else:
             schema_linking_result = run_candidate_schema_linking(
-                sample, 
-                candidate_configs, 
-                schema_manager, 
-                azure_linker_token_counter, 
-                gcp_linker_token_counter,
+                sample,
+                candidate_configs,
+                schema_manager,
             )
             with open(os.path.join(schema_linking_output_dir, f"{idx:4d}.json"), "w") as f:
                 json.dump(schema_linking_result, f, indent=2)
         return dict(schema_linking_result)
-    
+
     with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
-        futures = [executor.submit(
-            maybe_run_candidate_schema_linking, 
-            idx, 
-            cached_schema_linking_results, 
-            sample, 
-            candidate_configs, 
-            schema_manager, 
-            azure_linker_token_counter, 
-            gcp_linker_token_counter
-        ) for idx, sample in enumerate(test_data)]
+        futures = [
+            executor.submit(
+                maybe_run_candidate_schema_linking,
+                idx,
+                cached_schema_linking_results,
+                sample,
+                candidate_configs,
+                schema_manager,
+            )
+            for idx, sample in enumerate(test_data)
+        ]
         for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
             schema_linking_outputs[idx] = future.result()
-    
-    # Save token counts for schema linking
-    save_token_counts(schema_linking_output_dir, schema_linking_counters)
 
     del cached_schema_linking_results
     logger.info("Schema linking complete")
@@ -745,13 +684,7 @@ def main():
     #############################
     embedding_output_dir = os.path.join(args.output_path, "2_embeddings")
     os.makedirs(embedding_output_dir, exist_ok=True)
-    
-    # Load token counts for embeddings
-    embedding_counters = {
-        "cohere_character": cohere_character_counter
-    }
-    load_token_counts(embedding_output_dir, embedding_counters)
-    
+
     # check for cached npy embeddings file
     _embeddings = None
     if os.path.isfile(os.path.join(embedding_output_dir, "embeddings.npy")):
@@ -772,20 +705,17 @@ def main():
             with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "w") as f:
                 f.write("\n".join(masked_questions))
         logger.info("Embedding processed questions...")
-        embeddings = embedder.embed(masked_questions, verbose=True)
-        np.save(os.path.join(embedding_output_dir, "embeddings.npy"), embeddings)
-    
-    # Save token counts for embeddings
-    save_token_counts(embedding_output_dir, embedding_counters)
-    
+        embedding_response: EmbeddingResult = embedder.embed(masked_questions, verbose=True)
+    embeddings = embedding_response.embedding
+    np.save(os.path.join(embedding_output_dir, "embeddings.npy"), embeddings)
     logger.info(f"Embeddings of size ({np.array(embeddings).shape}) complete")
-    
+
     #############################
     # few-shot retrieval
     #############################
     fewshot_retrieval_output_dir = os.path.join(args.output_path, "3_fewshot_retrieval")
     os.makedirs(fewshot_retrieval_output_dir, exist_ok=True)
-    
+
     cached_fewshot_retrieval_results: dict = {}
     for file in os.listdir(fewshot_retrieval_output_dir):
         if file.endswith(".json") and file != "token_counts.json":
@@ -812,13 +742,7 @@ def main():
     #############################
     sql_generation_output_dir = os.path.join(args.output_path, "4_sql_generation")
     os.makedirs(sql_generation_output_dir, exist_ok=True)
-    
-    # Load token counts for SQL generation
-    sql_generation_counters = {
-        "gcp_candidate": gcp_candidate_token_counter
-    }
-    load_token_counts(sql_generation_output_dir, sql_generation_counters)
-    
+
     cached_sql_generation_results: dict = {}
     for file in os.listdir(sql_generation_output_dir):
         if file.endswith(".json") and file != "token_counts.json" and not file.endswith("_messages.json"):
@@ -827,16 +751,17 @@ def main():
                 cached_sql_generation_results[index] = json.load(f)
     logger.info(f"Loaded {len(cached_sql_generation_results)} cached sql generation results")
     logger.info(f"Running sql generation for {len(test_data)-len(cached_sql_generation_results)} samples")
+
     # run sql generation for each sample, using threading executor
     def maybe_run_candidate_sql_generation(
-            idx, 
-            cached_sql_generation_results, 
-            sample, 
-            generator, 
-            candidate_configs, 
-            schema_linking_outputs, 
-            few_shot_results
-        ) -> list[str]:
+        idx,
+        cached_sql_generation_results,
+        sample,
+        generator,
+        candidate_configs,
+        schema_linking_outputs,
+        few_shot_results,
+    ) -> list[str]:
         if idx in cached_sql_generation_results:
             sql_generation_result: list[str] = cached_sql_generation_results[idx]
             messages = []
@@ -857,21 +782,21 @@ def main():
 
     sql_generation_results: dict = {}
     with ThreadPoolExecutor(max_workers=min(2, args.num_workers)) as executor:
-        futures = [executor.submit(
-            maybe_run_candidate_sql_generation, 
-            idx, 
-            cached_sql_generation_results, 
-            sample, 
-            gcp_generator_candidate, 
-            candidate_configs, 
-            schema_linking_outputs[idx], 
-            fewshot_retrieval_results[idx]
-        ) for idx, sample in enumerate(test_data)]
+        futures = [
+            executor.submit(
+                maybe_run_candidate_sql_generation,
+                idx,
+                cached_sql_generation_results,
+                sample,
+                gcp_generator_candidate,
+                candidate_configs,
+                schema_linking_outputs[idx],
+                fewshot_retrieval_results[idx],
+            )
+            for idx, sample in enumerate(test_data)
+        ]
         for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
             sql_generation_results[idx] = future.result()
-    
-    # Save token counts for SQL generation
-    save_token_counts(sql_generation_output_dir, sql_generation_counters)
 
     del cached_sql_generation_results
     logger.info("Sql generation complete")
@@ -881,13 +806,7 @@ def main():
     #############################
     rewritten_results_output_dir = os.path.join(args.output_path, "5_rewritten_results")
     os.makedirs(rewritten_results_output_dir, exist_ok=True)
-    
-    # Load token counts for rewrite check
-    rewrite_counters = {
-        "gcp_candidate": gcp_candidate_token_counter
-    }
-    load_token_counts(rewritten_results_output_dir, rewrite_counters)
-    
+
     cached_rewritten_results: dict = {}
     for file in os.listdir(rewritten_results_output_dir):
         if file.endswith(".json") and file != "token_counts.json" and not file.endswith("_messages.json"):
@@ -896,13 +815,13 @@ def main():
                 cached_rewritten_results[index] = json.load(f)
     logger.info(f"Loaded {len(cached_rewritten_results)} cached rewritten results")
     logger.info(f"Running rewrite check for {len(test_data)-len(cached_rewritten_results)} samples")
-    
+
     # Flatten the sql_generation_results dict into a list of tuples (idx, sql_idx, sql)
     flattened_sqls = []
     for idx, sqls in sql_generation_results.items():
         for sql_idx, sql in enumerate(sqls):
             flattened_sqls.append((idx, sql_idx, sql))
-    
+
     # Function to run rewrite check on a single SQL
     def run_rewrite_check_wrapper(params):
         idx, sql_idx, sql = params
@@ -913,13 +832,13 @@ def main():
                 predicted_sql=sql,
                 dataset=dataset,
                 generator=gcp_generator_candidate,
-                schema_manager=schema_manager
+                schema_manager=schema_manager,
             )
             return idx, sql_idx, rewritten_sql, messages
         except Exception as e:
             logger.error(f"Error in rewrite check for idx {idx}, sql_idx {sql_idx}: {str(e)}")
             return idx, sql_idx, sql, []  # Return original SQL if rewrite fails
-    
+
     # Run rewrite check in parallel
     rewritten_sqls = {}
     rewrite_messages = {}
@@ -933,34 +852,31 @@ def main():
                     rewrite_messages[idx] = [[] for _ in range(len(sql_generation_results[idx]))]
                 rewritten_sqls[idx][sql_idx] = rewritten_sql
                 rewrite_messages[idx][sql_idx] = messages
-    
+
     # Save rewritten results
     for idx, rewritten_sql_list in rewritten_sqls.items():
         with open(os.path.join(rewritten_results_output_dir, f"{idx:04d}.json"), "w") as f:
             json.dump(rewritten_sql_list, f, indent=2)
-        
+
         # Save messages if enabled
         if args.save_messages and idx in rewrite_messages:
             with open(os.path.join(rewritten_results_output_dir, f"{idx:04d}_messages.json"), "w") as f:
                 json.dump(rewrite_messages[idx], f, indent=2)
-    
-       # Calculate and log rewrite statistics
+
+    # Calculate and log rewrite statistics
     total_sqls = sum(len(sqls) for sqls in sql_generation_results.values())
     rewritten_sqls_count = 0
-    
+
     for idx, original_sqls in sql_generation_results.items():
         rewritten_sqls_list = rewritten_sqls.get(idx, [])
         for i, original_sql in enumerate(original_sqls):
             if i < len(rewritten_sqls_list) and rewritten_sqls_list[i] != original_sql:
                 rewritten_sqls_count += 1
-    
+
     rewrite_percentage = (rewritten_sqls_count / total_sqls) * 100 if total_sqls > 0 else 0
-    logger.info(f"Rewrite statistics: {rewritten_sqls_count} out of {total_sqls} SQL queries needed rewriting ({rewrite_percentage:.2f}%)")
-    
-    
-    # Save token counts for rewrite check
-    save_token_counts(rewritten_results_output_dir, rewrite_counters)
-    
+    logger.info(
+        f"Rewrite statistics: {rewritten_sqls_count} out of {total_sqls} SQL queries needed rewriting ({rewrite_percentage:.2f}%)"
+    )
     logger.info("Rewrite check complete")
 
     #############################
@@ -968,13 +884,7 @@ def main():
     #############################
     candidate_selection_output_dir = os.path.join(args.output_path, "6_candidate_selection")
     os.makedirs(candidate_selection_output_dir, exist_ok=True)
-    
-    # Load token counts for candidate selection
-    selection_counters = {
-        "gcp_selection": gcp_selection_token_counter
-    }
-    load_token_counts(candidate_selection_output_dir, selection_counters)
-    
+
     cached_candidate_selection_results: dict = {}
     for file in os.listdir(candidate_selection_output_dir):
         if file.endswith(".txt") and file != "token_counts.json":
@@ -1002,10 +912,7 @@ def main():
         candidate_selection_results[idx] = candidate_selection_result
         with open(os.path.join(candidate_selection_output_dir, f"{idx:4d}.txt"), "w") as f:
             f.write(candidate_selection_result)
-    
-    # Save token counts for candidate selection
-    save_token_counts(candidate_selection_output_dir, selection_counters)
-    
+
     logger.info("Candidate selection complete")
 
     #############################
@@ -1030,28 +937,7 @@ def main():
         "call_count": 0,
     }
 
-    for token_counter in [
-        azure_linker_token_counter,
-        gcp_linker_token_counter,
-        gcp_candidate_token_counter,
-        gcp_selection_token_counter,
-    ]:
-        total_dict["prompt_tokens"] += token_counter.prompt_tokens
-        total_dict["completion_tokens"] += token_counter.completion_tokens
-        total_dict["total_tokens"] += token_counter.total_tokens
-        total_dict["call_count"] += token_counter.call_count
-
-    all_counts = {
-        "cohere_character_counts": cohere_character_counter.get_counts(),
-        "azure_linker_counts": azure_linker_token_counter.get_counts(),
-        "gcp_linker_counts": gcp_linker_token_counter.get_counts(),
-        "gcp_candidate_counts": gcp_candidate_token_counter.get_counts(),
-        "gcp_selection_counts": gcp_selection_token_counter.get_counts(),
-        "total_token_usage": total_dict,
-    }
-    logger.info(f"Token Counts: {json.dumps(all_counts, indent=4)}")
-    with open(os.path.join(args.output_path, "token_counts.json"), "w") as f:
-        json.dump(all_counts, f, indent=2)
+    # todo: calculate final token counts
 
 
 if __name__ == "__main__":
