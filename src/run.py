@@ -16,13 +16,14 @@ import yaml
 
 from dotenv import load_dotenv
 from loguru import logger
+from pydantic import BaseModel
 
 from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 
 from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
 from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder, EmbeddingResult
-from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator
+from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator, GenerationResult
 from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
 from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.prompts.formatters import RewritePromptFormatter
@@ -32,6 +33,29 @@ from text2sql.utils.postprocess import get_table_names_from_query
 from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens
 
 from text2sql.pipeline.selection import select_best_candidate
+
+
+class SchemaLinkingOutput(BaseModel):
+    question_id: int
+    model_name: str
+    schema_format: str
+    messages: list[dict]
+    generator_output: GenerationResult
+    prediction: str
+    table_linking: dict | None
+    column_linking: dict | None
+    table_description: str
+    column_description: str
+    full_description: str
+
+
+class CandidateGenerationOutput(BaseModel):
+    question_id: int
+    schema_format: str
+    schema_filtering: Literal["none", "table", "column"]
+    messages: list[dict]
+    generator_output: GenerationResult
+    candidate_sql: str
 
 
 def prepare_dataset_information(
@@ -104,7 +128,7 @@ def run_embedding(
             embedding_result = future.result()
             question_id = question_ids[idx]
             with open(os.path.join(output_dir, f"embedding_qid-{question_id:04d}.json"), "w") as f:
-                f.write(embedding_result.model_dump_json())
+                f.write(embedding_result.model_dump_json(indent=2))
             responses.append(embedding_result)
     return responses
 
@@ -112,15 +136,17 @@ def run_embedding(
 def run_schema_linking(
     generator: BaseGenerator,
     schema_manager: SchemaManager,
+    model_name: str,
     sample: dict,
     schema_format: str,
     schema_linking_generator: str,
-) -> dict:
+) -> SchemaLinkingOutput:
     """run the schema linking task
 
     Args:
         generator: LLM generator
         schema_manager: the schema manager
+        model_name: the name of the model
         sample: one sample from the test set json
         schema_format: schema mode to use
     Returns:
@@ -129,13 +155,15 @@ def run_schema_linking(
     db_id = sample["db_id"]
     question = sample["question"]
     evidence = sample.get("evidence", "")
+    question_id = sample["question_id"]
 
     # generate the input messages and run inference
     message_formatter = SchemaLinkingFewShotFormatter(SCHEMA_LINKING_EXAMPLES, description_format=schema_format)
     schema_description = schema_manager.get_full_schema(db_id, schema_format)
     is_gemini = schema_linking_generator == "gcp"
-    messages = message_formatter.generate_messages(schema_description, question, evidence, gemini=is_gemini)
-    raw_prediction = generator.generate(messages, temperature=0.0)
+    messages: list[dict] = message_formatter.generate_messages(schema_description, question, evidence, gemini=is_gemini)
+    prediction_output: GenerationResult = generator.generate(messages, temperature=0.0)
+    raw_prediction: str = prediction_output.text
     try:
         full_linking: dict = parse_json_from_prediction(raw_prediction)
         table_linking = dict([(table, "keep_all") for table in full_linking.keys()])
@@ -148,24 +176,26 @@ def run_schema_linking(
         column_description = schema_description
         table_description = schema_description
 
-    outputs = {
-        "messages": messages,
-        "prediction": raw_prediction,
-        "table_linking": table_linking,
-        "column_linking": full_linking,
-        "table_description": table_description,
-        "column_description": column_description,
-        "full_description": schema_description,
-    }
-
-    return outputs
+    return SchemaLinkingOutput(
+        question_id=question_id,
+        model_name=model_name,
+        schema_format=schema_format,
+        messages=messages,
+        generator_output=prediction_output,
+        prediction=raw_prediction,
+        table_linking=table_linking,
+        column_linking=full_linking,
+        table_description=table_description,
+        column_description=column_description,
+        full_description=schema_description,
+    )
 
 
 def run_candidate_schema_linking(
     sample: dict,
     candidate_configs: list[dict],
     schema_manager: SchemaManager,
-) -> defaultdict:
+) -> list[SchemaLinkingOutput]:
     """run schema linking for all candidate configs
 
     Args:
@@ -203,6 +233,7 @@ def run_candidate_schema_linking(
             jobs.append(
                 {
                     "generator": schema_linking_generator,
+                    "model_name": schema_linking_model,
                     "schema_manager": schema_manager,
                     "sample": sample,
                     "schema_format": schema_format,
@@ -214,13 +245,9 @@ def run_candidate_schema_linking(
         return run_schema_linking(**job_dict)
 
     with ThreadPool(len(jobs)) as pool:
-        schema_linking_predictions = list(pool.imap(run_schema_linking_wrapper, jobs))
+        schema_linking_predictions: list[SchemaLinkingOutput] = list(pool.imap(run_schema_linking_wrapper, jobs))
 
-    for idx in range(len(job_configs)):
-        model, fmt = job_configs[idx]
-        schema_linking_outputs[model][fmt] = schema_linking_predictions[idx]
-
-    return schema_linking_outputs
+    return schema_linking_predictions
 
 
 def run_fewshot_retrieval(
@@ -244,10 +271,10 @@ def run_sql_generation(
     generator: BaseGenerator,
     sample: dict,
     few_shot_results: list[dict],
-    schema_linking_outputs: dict,
+    schema_linking_outputs: SchemaLinkingOutput,
     schema_format: str,
     schema_filtering: Literal["none", "table", "column"],
-) -> str:
+) -> CandidateGenerationOutput:
     """run the sql generation task"""
     # format messages
     few_shot_examples: list[dict] = [result for result in few_shot_results if schema_format in result["data"]]
@@ -258,11 +285,11 @@ def run_sql_generation(
         fewshot_schema_key=schema_format,
     )
     if schema_filtering == "table":
-        schema_description = schema_linking_outputs["table_description"]
+        schema_description = schema_linking_outputs.table_description
     elif schema_filtering == "column":
-        schema_description = schema_linking_outputs["column_description"]
+        schema_description = schema_linking_outputs.column_description
     else:
-        schema_description = schema_linking_outputs["full_description"]
+        schema_description = schema_linking_outputs.full_description
     messages = message_formatter.generate_messages(
         schema_description=schema_description,
         query=sample["question"],
@@ -270,28 +297,46 @@ def run_sql_generation(
         few_shot_examples=few_shot_examples,
     )
     # run inference
-    raw_prediction = generator.generate(messages, temperature=0.0)
+    prediction_output: GenerationResult = generator.generate(messages, temperature=0.0)
+    raw_prediction = prediction_output.text
     sql_prediction = extract_first_code_block(raw_prediction)
     if not sql_prediction:
         sql_prediction = raw_prediction
-    return sql_prediction, messages
+    return CandidateGenerationOutput(
+        question_id=sample["question_id"],
+        schema_format=schema_format,
+        schema_filtering=schema_filtering,
+        messages=messages,
+        generator_output=prediction_output,
+        candidate_sql=sql_prediction,
+    )
 
 
 def run_candidate_sql_generation(
     sample: dict,
     generator: BaseGenerator,
     candidate_configs: list[dict],
-    schema_linking_outputs: defaultdict,
+    candidate_schema_linking_outputs: dict[str, dict[str, SchemaLinkingOutput]],
     few_shot_results: list[dict],
-) -> list[str]:
+) -> list[CandidateGenerationOutput]:
+    """run the candidate sql generation task
 
+    Args:
+        sample: the sample to run the task on
+        generator: the generator to use
+        candidate_configs: the candidate configs to use
+        candidate_schema_linking_outputs: the candidate schema linking outputs for this question id
+        few_shot_results: the few shot results to use
+    Returns:
+        candidate_sqls: the candidate sqls
+    """
     # built args
     gen_args: list[dict] = []
     for candidate_config in candidate_configs:
         model = candidate_config["model"]
         schema_format = candidate_config["schema_format"]
         schema_filtering = candidate_config["schema_filtering"]
-        schema_linking_output = schema_linking_outputs[model][schema_format]
+        schema_linking_output: SchemaLinkingOutput = candidate_schema_linking_outputs[model][schema_format]
 
         gen_args.append(
             {
@@ -313,12 +358,9 @@ def run_candidate_sql_generation(
             return "", []
 
     with ThreadPool(len(gen_args)) as pool:
-        results: list[tuple[str, list[str]]] = list(pool.imap(run_sql_generation_wrapper, gen_args))
-        # get candidate sqls and messages
-        candidate_sqls = [sql for sql, _ in results]
-        messages = [message for _, message in results]
+        results: list[CandidateGenerationOutput] = list(pool.imap(run_sql_generation_wrapper, gen_args))
 
-    return candidate_sqls, messages
+    return results
 
 
 def run_sql_rewrite(
@@ -658,23 +700,30 @@ def main():
 
     #############################
     # schema linking
-    # outputs: dicts (todo: pydantic models)
+    # outputs: list[SchemaLinkingOutput]
     #############################
     # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
     os.makedirs(schema_linking_output_dir, exist_ok=True)
 
-    cached_schema_linking_results: dict = {}
+    schema_linking_results: dict = {}
     for file in os.listdir(schema_linking_output_dir):
-        if file.startswith("schema-linking_qid-") and file.endswith(".json"):
-            # get id from filename
+        if file.startswith("schema-linking_") and file.endswith(".json"):
+            # get question id from filename
             question_id = int(file.split(".")[0].split("-")[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(schema_linking_output_dir, file), "r") as f:
-                    cached_schema_linking_results[question_id] = json.load(f)
-    logger.info(f"Loaded {len(cached_schema_linking_results)} cached schema linking results")
+                    schema_linking_output: SchemaLinkingOutput = SchemaLinkingOutput.model_validate_json(f.read())
+                    model_name = schema_linking_output.model_name
+                    schema_format = schema_linking_output.schema_format
+                    if model_name not in schema_linking_results[question_id]:
+                        schema_linking_results[question_id][model_name] = {}
+                    if schema_format not in schema_linking_results[question_id][model_name]:
+                        schema_linking_results[question_id][model_name][schema_format] = []
+                    schema_linking_results[question_id][model_name][schema_format] = schema_linking_output
+    logger.info(f"Loaded {len(schema_linking_results)} cached schema linking results")
     # check how many samples not in cache based on question_id
-    cached_question_ids = set(cached_schema_linking_results.keys())
+    cached_question_ids = set(schema_linking_results.keys())
     missing_question_ids = set(
         [sample["question_id"] for sample in test_data if sample["question_id"] not in cached_question_ids]
     )
@@ -695,12 +744,18 @@ def main():
         ]
         for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
             question_id = test_data[idx]["question_id"]
-            schema_linking_outputs[question_id] = future.result()
+            predicted_schema_linking_outputs: list[SchemaLinkingOutput] = future.result()
+            for output in predicted_schema_linking_outputs:
+                model_name = output.model_name.replace("_", "").replace(" ", "")
+                schema_format = output.schema_format.replace("_", "").replace(" ", "")
+                output_file = f"schema-linking_mdl-{model_name}_fmt-{schema_format}_qid-{question_id:4d}.json"
+                with open(os.path.join(schema_linking_output_dir, output_file), "w") as f:
+                    f.write(output.model_dump_json(indent=2))
+                schema_linking_results[question_id][model_name][schema_format] = output
 
     # check all question ids are in schema_linking_outputs
     for sample in test_data:
         assert sample["question_id"] in schema_linking_outputs
-    del cached_schema_linking_results
     logger.info("Schema linking complete")
 
     #############################
@@ -774,63 +829,48 @@ def main():
     #############################
     # sql candidate generation
     #############################
-    sql_generation_output_dir = os.path.join(args.output_path, "4_sql_generation")
+    sql_generation_output_dir = os.path.join(args.output_path, "4_candidate_generation")
     os.makedirs(sql_generation_output_dir, exist_ok=True)
 
     cached_sql_generation_results: dict = {}
-    for file in os.listdir(sql_generation_output_dir):
-        if file.endswith(".json") and file != "token_counts.json" and not file.endswith("_messages.json"):
-            index = int(file.split(".")[0])
-            with open(os.path.join(sql_generation_output_dir, file), "r") as f:
-                cached_sql_generation_results[index] = json.load(f)
-    logger.info(f"Loaded {len(cached_sql_generation_results)} cached sql generation results")
-    logger.info(f"Running sql generation for {len(test_data)-len(cached_sql_generation_results)} samples")
+    # for file in os.listdir(sql_generation_output_dir):
+    #     if (
+    #         os.path.basename(file).startswith("candidate_sql_qid-")
+    #         and file.endswith(".json")
+    #         and not file.endswith("_messages.json")
+    #     ):
+    #         question_id = int(file.split(".")[0].split("-")[-1])
+    #         with open(os.path.join(sql_generation_output_dir, file), "r") as f:
+    #             # todo
+    #             pass
+    #         # cached_sql_generation_results[question_id] = json.load(f)
+    # logger.info(f"Loaded {len(cached_sql_generation_results)} cached sql generation results")
+    # missing_samples = [sample for sample in test_data if sample["question_id"] not in cached_sql_generation_results]
+    # logger.info(f"Running sql generation for {missing_samples} samples")
 
+    missing_samples = test_data[:]
     # run sql generation for each sample, using threading executor
-    def maybe_run_candidate_sql_generation(
-        idx,
-        cached_sql_generation_results,
-        sample,
-        generator,
-        candidate_configs,
-        schema_linking_outputs,
-        few_shot_results,
-    ) -> list[str]:
-        if idx in cached_sql_generation_results:
-            sql_generation_result: list[str] = cached_sql_generation_results[idx]
-            messages = []
-        else:
-            sql_generation_result, messages = run_candidate_sql_generation(
-                sample=sample,
-                generator=generator,
-                candidate_configs=candidate_configs,
-                schema_linking_outputs=schema_linking_outputs,
-                few_shot_results=few_shot_results,
-            )
-        with open(os.path.join(sql_generation_output_dir, f"{idx:4d}.json"), "w") as f:
-            json.dump(sql_generation_result, f, indent=2)
-        if messages and args.save_messages:
-            with open(os.path.join(sql_generation_output_dir, f"{idx:4d}_messages.json"), "w") as f:
-                json.dump(messages, f, indent=2)
-        return sql_generation_result
 
     sql_generation_results: dict = {}
     with ThreadPoolExecutor(max_workers=min(2, args.num_workers)) as executor:
         futures = [
             executor.submit(
-                maybe_run_candidate_sql_generation,
-                idx,
-                cached_sql_generation_results,
+                run_candidate_sql_generation,
                 sample,
                 gcp_generator_candidate,
                 candidate_configs,
-                schema_linking_outputs[idx],
-                fewshot_retrieval_results[idx],
+                schema_linking_outputs[sample["question_id"]],
+                fewshot_retrieval_results[sample["question_id"]],
             )
-            for idx, sample in enumerate(test_data)
+            for sample in missing_samples
         ]
-        for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
-            sql_generation_results[idx] = future.result()
+        for future in tqdm.tqdm(futures, total=len(test_data)):
+            candidates: list[CandidateGenerationOutput] = future.result()
+            if len(candidates) == 0:
+                logger.warning(f"No candidates found for sample {sample['question_id']}")
+                continue
+            question_id = candidates[0]["question_id"]
+            sql_generation_results[question_id] = candidates
 
     del cached_sql_generation_results
     logger.info("Sql generation complete")
