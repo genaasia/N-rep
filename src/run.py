@@ -58,6 +58,22 @@ class CandidateGenerationOutput(BaseModel):
     candidate_sql: str
 
 
+class CandidateGenerationOutputBundle(BaseModel):
+    question_id: int
+    candidate_configs: list[dict]
+    candidates: list[CandidateGenerationOutput]
+
+
+class RewriteOutput(BaseModel):
+    question_id: int
+    original_sql: str
+    rewritten_sql: str
+    is_rewritten: bool
+    messages: list[dict]
+    all_messages: list[dict] = []
+    generator_output: GenerationResult | None
+
+
 def prepare_dataset_information(
     test_database_path: str, table_descriptions_path: str | None
 ) -> tuple[SqliteDataset, SchemaManager]:
@@ -365,10 +381,10 @@ def run_candidate_sql_generation(
 
 def run_sql_rewrite(
     generator: BaseGenerator,
-    question: str,
+    sample: dict,
     original_sql: str,
     schema_description: str,
-) -> tuple[str, list[dict]]:
+) -> RewriteOutput:
     """run the sql generation task"""
     # format messages
     message_formatter = RewritePromptFormatter(
@@ -376,15 +392,23 @@ def run_sql_rewrite(
     )
     messages = message_formatter.generate_messages(
         schema_description=schema_description,
-        query=question,
+        query=sample["question"],
         predicted_sql=original_sql,
     )
     # run inference
-    raw_prediction = generator.generate(messages, temperature=0.0)
+    prediction_output: GenerationResult = generator.generate(messages, temperature=0.0)
+    raw_prediction = prediction_output.text
     sql_prediction = extract_first_code_block(raw_prediction)
     if not sql_prediction:
         sql_prediction = raw_prediction
-    return sql_prediction, messages
+    return RewriteOutput(
+        question_id=sample["question_id"],
+        original_sql=original_sql,
+        rewritten_sql=sql_prediction,
+        messages=messages,
+        generator_output=prediction_output,
+        is_rewritten=True if sql_prediction != original_sql else False,
+    )
 
 
 def check_need_rewrite(result):
@@ -416,12 +440,22 @@ def get_filtered_schema_description_for_rewrite(db_name, schema, prediction):
 
 def run_rewrite_check(
     sample: dict, predicted_sql: str, dataset: BaseDataset, generator: BaseGenerator, schema_manager: SchemaManager
-) -> tuple[str, list[dict]]:
+) -> RewriteOutput:
     database = sample["db_id"]
     max_retries = 3
     attempt = 0
     current_sql = predicted_sql
     all_messages = []
+
+    # default output
+    rewritten_output = RewriteOutput(
+        question_id=sample["question_id"],
+        original_sql=predicted_sql,
+        rewritten_sql=predicted_sql,
+        messages=[],
+        generator_output=None,
+        is_rewritten=False,
+    )
 
     while attempt < max_retries:
         # Check current SQL execution
@@ -430,7 +464,7 @@ def run_rewrite_check(
 
         # If no rewrite needed, return current SQL
         if not check_need_rewrite(execution_results):
-            return current_sql, all_messages
+            return rewritten_output
 
         # Get filtered schema for rewrite
         filtered_schema_description = get_filtered_schema_description_for_rewrite(
@@ -439,12 +473,12 @@ def run_rewrite_check(
 
         try:
             # Attempt rewrite
-            rewritten_sql, messages = run_sql_rewrite(
-                generator, sample["question"], current_sql, filtered_schema_description
+            rewritten_output: RewriteOutput = run_sql_rewrite(
+                generator, sample, current_sql, filtered_schema_description
             )
-            all_messages.extend(messages)
+            all_messages.extend(rewritten_output.messages)
 
-            current_sql = rewritten_sql
+            current_sql = rewritten_output.rewritten_sql
             logger.debug(f"Rewrite attempt {attempt + 1}, SQL: {current_sql}")
 
         except Exception as e:
@@ -453,7 +487,9 @@ def run_rewrite_check(
 
         attempt += 1
 
-    return current_sql, all_messages
+    rewritten_output.all_messages = all_messages
+
+    return rewritten_output
 
 
 def run_candidate_selection(
@@ -697,6 +733,7 @@ def main():
         logger.remove()
         logger.add(sys.stderr, level="INFO")
     test_question_ids = [sample["question_id"] for sample in test_data]
+    logger.debug(f"Test question ids: {test_question_ids}")
 
     #############################
     # schema linking
@@ -707,30 +744,32 @@ def main():
     os.makedirs(schema_linking_output_dir, exist_ok=True)
 
     schema_linking_results: dict = {}
-    for file in os.listdir(schema_linking_output_dir):
+    for file in sorted(os.listdir(schema_linking_output_dir)):
         if file.startswith("schema-linking_") and file.endswith(".json"):
             # get question id from filename
-            question_id = int(file.split(".")[0].split("-")[-1])
+            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(schema_linking_output_dir, file), "r") as f:
                     schema_linking_output: SchemaLinkingOutput = SchemaLinkingOutput.model_validate_json(f.read())
                     model_name = schema_linking_output.model_name
                     schema_format = schema_linking_output.schema_format
+                    if question_id not in schema_linking_results:
+                        schema_linking_results[question_id] = {}
                     if model_name not in schema_linking_results[question_id]:
                         schema_linking_results[question_id][model_name] = {}
-                    if schema_format not in schema_linking_results[question_id][model_name]:
-                        schema_linking_results[question_id][model_name][schema_format] = []
                     schema_linking_results[question_id][model_name][schema_format] = schema_linking_output
+                    logger.debug(
+                        f"{question_id} model '{model_name}' schema '{schema_format}' from {os.path.basename(file)}"
+                    )
+                    logger.debug(f"check model keys for {question_id}: {schema_linking_results[question_id].keys()}")
     logger.info(f"Loaded {len(schema_linking_results)} cached schema linking results")
     # check how many samples not in cache based on question_id
-    cached_question_ids = set(schema_linking_results.keys())
     missing_question_ids = set(
-        [sample["question_id"] for sample in test_data if sample["question_id"] not in cached_question_ids]
+        [sample["question_id"] for sample in test_data if sample["question_id"] not in schema_linking_results]
     )
     logger.info(f"Running schema linking for {len(missing_question_ids)} samples")
 
     # run schema linking for each sample, with threading executor
-    schema_linking_outputs: dict = {}
     with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
         futures = [
             executor.submit(
@@ -746,16 +785,39 @@ def main():
             question_id = test_data[idx]["question_id"]
             predicted_schema_linking_outputs: list[SchemaLinkingOutput] = future.result()
             for output in predicted_schema_linking_outputs:
-                model_name = output.model_name.replace("_", "").replace(" ", "")
-                schema_format = output.schema_format.replace("_", "").replace(" ", "")
-                output_file = f"schema-linking_mdl-{model_name}_fmt-{schema_format}_qid-{question_id:4d}.json"
+                model_name = output.model_name
+                f_model_name = model_name.replace("_", "").replace(" ", "")
+                schema_format = output.schema_format
+                f_schema_format = schema_format.replace("_", "").replace(" ", "")
+                output_file = f"schema-linking_mdl-{f_model_name}_fmt-{f_schema_format}_qid-{question_id:04d}.json"
                 with open(os.path.join(schema_linking_output_dir, output_file), "w") as f:
                     f.write(output.model_dump_json(indent=2))
+                if question_id not in schema_linking_results:
+                    schema_linking_results[question_id] = {}
+                if model_name not in schema_linking_results[question_id]:
+                    schema_linking_results[question_id][model_name] = {}
                 schema_linking_results[question_id][model_name][schema_format] = output
 
     # check all question ids are in schema_linking_outputs
+    schema_keys = sorted(schema_linking_results.keys())
+    logger.debug(f"Schema linking results keys: {schema_keys}")
+    for key in schema_keys:
+        logger.debug(f"Schema linking results for question {key}: {schema_linking_results[key].keys()}")
+    for key in schema_keys:
+        mdl_keys = sorted(schema_linking_results[key].keys())
+        for mdl_key in mdl_keys:
+            logger.debug(
+                f"Schema linking results for question {key} model {mdl_key}: {schema_linking_results[key][mdl_key].keys()}"
+            )
+
     for sample in test_data:
-        assert sample["question_id"] in schema_linking_outputs
+        assert sample["question_id"] in schema_linking_results
+        for candidate_config in candidate_configs:
+            assert candidate_config["model"] in schema_linking_results[sample["question_id"]]
+            assert (
+                candidate_config["schema_format"]
+                in schema_linking_results[sample["question_id"]][candidate_config["model"]]
+            )
     logger.info("Schema linking complete")
 
     #############################
@@ -797,33 +859,31 @@ def main():
     fewshot_retrieval_output_dir = os.path.join(args.output_path, "3_fewshot_retrieval")
     os.makedirs(fewshot_retrieval_output_dir, exist_ok=True)
 
-    cached_fewshot_retrieval_results: dict = {}
+    fewshot_retrieval_results: dict = {}
     for file in os.listdir(fewshot_retrieval_output_dir):
         if os.path.basename(file).startswith("fewshot_qid-") and file.endswith(".json"):
             question_id = int(file.split(".")[0].split("-")[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(fewshot_retrieval_output_dir, file), "r") as f:
-                    cached_fewshot_retrieval_results[question_id] = json.load(f)
-    missing_samples = [sample for sample in test_data if sample["question_id"] not in cached_fewshot_retrieval_results]
-    logger.info(f"Loaded {len(cached_fewshot_retrieval_results)} cached fewshot retrieval results")
+                    fewshot_retrieval_results[question_id] = json.load(f)
+    missing_samples = [sample for sample in test_data if sample["question_id"] not in fewshot_retrieval_results]
+    logger.info(f"Loaded {len(fewshot_retrieval_results)} cached fewshot retrieval results")
     logger.info(f"Running fewshot retrieval for {len(missing_samples)} samples")
     # run fewshot retrieval for each sample
-    fewshot_retrieval_results: dict = {}
     for sample in tqdm.tqdm(test_data):
         question_id = sample["question_id"]
-        if question_id in cached_fewshot_retrieval_results:
-            fewshot_retrieval_result: list[dict] = cached_fewshot_retrieval_results[question_id]
+        if question_id in fewshot_retrieval_results:
+            fewshot_retrieval_result: list[dict] = fewshot_retrieval_results[question_id]
         else:
             fewshot_retrieval_result: list[dict] = run_fewshot_retrieval(
                 embedding_results[question_id].embedding, retriever, top_k=top_k
             )
         fewshot_retrieval_results[question_id] = fewshot_retrieval_result
-        with open(os.path.join(fewshot_retrieval_output_dir, f"fewshot_qid-{question_id:4d}.json"), "w") as f:
+        with open(os.path.join(fewshot_retrieval_output_dir, f"fewshot_qid-{question_id:04d}.json"), "w") as f:
             json.dump(fewshot_retrieval_result, f, indent=2)
     # assert all question ids are in fewshot_retrieval_results
     for sample in test_data:
         assert sample["question_id"] in fewshot_retrieval_results
-    del cached_fewshot_retrieval_results
     logger.info("Fewshot retrieval complete")
 
     #############################
@@ -832,26 +892,29 @@ def main():
     sql_generation_output_dir = os.path.join(args.output_path, "4_candidate_generation")
     os.makedirs(sql_generation_output_dir, exist_ok=True)
 
-    cached_sql_generation_results: dict = {}
-    # for file in os.listdir(sql_generation_output_dir):
-    #     if (
-    #         os.path.basename(file).startswith("candidate_sql_qid-")
-    #         and file.endswith(".json")
-    #         and not file.endswith("_messages.json")
-    #     ):
-    #         question_id = int(file.split(".")[0].split("-")[-1])
-    #         with open(os.path.join(sql_generation_output_dir, file), "r") as f:
-    #             # todo
-    #             pass
-    #         # cached_sql_generation_results[question_id] = json.load(f)
-    # logger.info(f"Loaded {len(cached_sql_generation_results)} cached sql generation results")
-    # missing_samples = [sample for sample in test_data if sample["question_id"] not in cached_sql_generation_results]
-    # logger.info(f"Running sql generation for {missing_samples} samples")
-
-    missing_samples = test_data[:]
+    sql_generation_results: dict[str, list[CandidateGenerationOutput]] = {}
+    for file in os.listdir(sql_generation_output_dir):
+        if os.path.basename(file).startswith("candidate_sql_qid-") and file.endswith(".json"):
+            question_id = int(file.split(".")[0].split("-")[-1])
+            if question_id in test_question_ids:
+                with open(os.path.join(sql_generation_output_dir, file), "r") as f:
+                    bundle = CandidateGenerationOutputBundle.model_validate_json(f.read())
+                    # check candidate_configs match
+                    if len(bundle.candidate_configs) != len(candidate_configs):
+                        logger.warning(
+                            f"cached candidate_configs do not match current candidate_configs for question {question_id} (lens differ)"
+                        )
+                        continue
+                    if any(config != candidate_configs[i] for i, config in enumerate(bundle.candidate_configs)):
+                        logger.warning(
+                            f"cached candidate_configs do not match current candidate_configs for question {question_id} (configs differ)"
+                        )
+                        continue
+                    sql_generation_results[question_id] = bundle.candidates
+    logger.info(f"Loaded {len(sql_generation_results)} cached sql generation results")
+    missing_samples = [sample for sample in test_data if sample["question_id"] not in sql_generation_results]
+    logger.info(f"Running sql generation for {len(missing_samples)} samples")
     # run sql generation for each sample, using threading executor
-
-    sql_generation_results: dict = {}
     with ThreadPoolExecutor(max_workers=min(2, args.num_workers)) as executor:
         futures = [
             executor.submit(
@@ -859,7 +922,7 @@ def main():
                 sample,
                 gcp_generator_candidate,
                 candidate_configs,
-                schema_linking_outputs[sample["question_id"]],
+                schema_linking_results[sample["question_id"]],
                 fewshot_retrieval_results[sample["question_id"]],
             )
             for sample in missing_samples
@@ -869,10 +932,15 @@ def main():
             if len(candidates) == 0:
                 logger.warning(f"No candidates found for sample {sample['question_id']}")
                 continue
-            question_id = candidates[0]["question_id"]
+            question_id = candidates[0].question_id
+            output = CandidateGenerationOutputBundle(
+                question_id=question_id,
+                candidate_configs=candidate_configs,
+                candidates=candidates,
+            )
+            with open(os.path.join(sql_generation_output_dir, f"candidate_sql_qid-{question_id:04d}.json"), "w") as f:
+                f.write(output.model_dump_json(indent=2))
             sql_generation_results[question_id] = candidates
-
-    del cached_sql_generation_results
     logger.info("Sql generation complete")
 
     #############################
@@ -892,50 +960,43 @@ def main():
 
     # Flatten the sql_generation_results dict into a list of tuples (idx, sql_idx, sql)
     flattened_sqls = []
-    for idx, sqls in sql_generation_results.items():
-        for sql_idx, sql in enumerate(sqls):
-            flattened_sqls.append((idx, sql_idx, sql))
+    for idx, candidate_generation_outputs in sql_generation_results.items():
+        for sql_idx, candidate_generation_output in enumerate(candidate_generation_outputs):
+            flattened_sqls.append((idx, sql_idx, candidate_generation_output.candidate_sql))
 
     # Function to run rewrite check on a single SQL
     def run_rewrite_check_wrapper(params):
         idx, sql_idx, sql = params
         sample = test_data[idx]
         try:
-            rewritten_sql, messages = run_rewrite_check(
+            output: RewriteOutput = run_rewrite_check(
                 sample=sample,
                 predicted_sql=sql,
                 dataset=dataset,
                 generator=gcp_generator_candidate,
                 schema_manager=schema_manager,
             )
-            return idx, sql_idx, rewritten_sql, messages
+            return idx, sql_idx, output.rewritten_sql, output
         except Exception as e:
-            logger.error(f"Error in rewrite check for idx {idx}, sql_idx {sql_idx}: {str(e)}")
-            return idx, sql_idx, sql, []  # Return original SQL if rewrite fails
+            logger.error(
+                f"Error in rewrite check for idx {idx}, sql_idx {sql_idx}: {str(e)}: output type: {type(output).__name__}"
+            )
+            logger.error(f"output: {output}")
+            return idx, sql_idx, sql, None  # Return original SQL if rewrite fails
 
     # Run rewrite check in parallel
     rewritten_sqls = {}
-    rewrite_messages = {}
     if flattened_sqls:
         with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
             futures = [executor.submit(run_rewrite_check_wrapper, params) for params in flattened_sqls]
             for future in tqdm.tqdm(futures, total=len(flattened_sqls), desc="Running rewrite check"):
-                idx, sql_idx, rewritten_sql, messages = future.result()
+                tuple_result = future.result()
+                idx, sql_idx, rewritten_sql, output = tuple_result
                 if idx not in rewritten_sqls:
                     rewritten_sqls[idx] = [""] * len(sql_generation_results[idx])
-                    rewrite_messages[idx] = [[] for _ in range(len(sql_generation_results[idx]))]
                 rewritten_sqls[idx][sql_idx] = rewritten_sql
-                rewrite_messages[idx][sql_idx] = messages
 
     # Save rewritten results
-    for idx, rewritten_sql_list in rewritten_sqls.items():
-        with open(os.path.join(rewritten_results_output_dir, f"{idx:04d}.json"), "w") as f:
-            json.dump(rewritten_sql_list, f, indent=2)
-
-        # Save messages if enabled
-        if args.save_messages and idx in rewrite_messages:
-            with open(os.path.join(rewritten_results_output_dir, f"{idx:04d}_messages.json"), "w") as f:
-                json.dump(rewrite_messages[idx], f, indent=2)
 
     # Calculate and log rewrite statistics
     total_sqls = sum(len(sqls) for sqls in sql_generation_results.values())
@@ -984,7 +1045,7 @@ def main():
                 chase=True,
             )
         candidate_selection_results[idx] = candidate_selection_result
-        with open(os.path.join(candidate_selection_output_dir, f"{idx:4d}.txt"), "w") as f:
+        with open(os.path.join(candidate_selection_output_dir, f"{idx:04d}.txt"), "w") as f:
             f.write(candidate_selection_result)
 
     logger.info("Candidate selection complete")
