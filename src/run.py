@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.pool import ThreadPool
 from typing import Literal
 
+import dill as pickle
 import numpy as np
 import tqdm
 import yaml
@@ -74,6 +75,38 @@ def prepare_fewshot_retriever(embeddings_path: str, embeddings_data_path: str) -
         )
     retriever = LocalRetriever(embeddings, embeddings_data)
     return retriever
+
+
+def run_embedding(
+    embedder: BaseEmbedder,
+    samples: list[dict],
+    output_dir: str,
+    n_jobs: int = 1,
+) -> list[EmbeddingResult]:
+    """run the embedding task
+
+    Args:
+        embedder: the embedder
+        samples: the samples to embed
+        output_dir: the output directory
+        n_jobs: the number of jobs to run in parallel
+    Returns:
+        embedding_result: the embedding result
+    """
+    # run embedding in parallel using thread executor,
+    # and save each EmbeddingResult to a file named "question_id-{question_id:04d}.json" using model_dump_json
+    # use tqdm to show progress
+    with ThreadPoolExecutor(max_workers=n_jobs) as executor:
+        futures = [executor.submit(embedder.embed, [sample["question"]], verbose=False) for sample in samples]
+        question_ids = [sample["question_id"] for sample in samples]
+        responses: list[EmbeddingResult] = []
+        for idx, future in tqdm.tqdm(enumerate(futures), total=len(samples)):
+            embedding_result = future.result()
+            question_id = question_ids[idx]
+            with open(os.path.join(output_dir, f"embedding_qid-{question_id:04d}.json"), "w") as f:
+                f.write(embedding_result.model_dump_json())
+            responses.append(embedding_result)
+    return responses
 
 
 def run_schema_linking(
@@ -621,9 +654,11 @@ def main():
     else:
         logger.remove()
         logger.add(sys.stderr, level="INFO")
+    test_question_ids = [sample["question_id"] for sample in test_data]
 
     #############################
     # schema linking
+    # outputs: dicts (todo: pydantic models)
     #############################
     # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
@@ -631,84 +666,75 @@ def main():
 
     cached_schema_linking_results: dict = {}
     for file in os.listdir(schema_linking_output_dir):
-        if file.endswith(".json") and file != "token_counts.json":
+        if file.startswith("schema-linking_qid-") and file.endswith(".json"):
             # get id from filename
-            index = int(file.split(".")[0])
-            with open(os.path.join(schema_linking_output_dir, file), "r") as f:
-                cached_schema_linking_results[index] = json.load(f)
+            question_id = int(file.split(".")[0].split("-")[-1])
+            if question_id in test_question_ids:
+                with open(os.path.join(schema_linking_output_dir, file), "r") as f:
+                    cached_schema_linking_results[question_id] = json.load(f)
     logger.info(f"Loaded {len(cached_schema_linking_results)} cached schema linking results")
-    logger.info(f"Running schema linking for {len(test_data)-len(cached_schema_linking_results)} samples")
+    # check how many samples not in cache based on question_id
+    cached_question_ids = set(cached_schema_linking_results.keys())
+    missing_question_ids = set(
+        [sample["question_id"] for sample in test_data if sample["question_id"] not in cached_question_ids]
+    )
+    logger.info(f"Running schema linking for {len(missing_question_ids)} samples")
 
     # run schema linking for each sample, with threading executor
     schema_linking_outputs: dict = {}
-
-    def maybe_run_candidate_schema_linking(
-        idx,
-        cached_schema_linking_results,
-        sample,
-        candidate_configs,
-        schema_manager,
-    ) -> dict:
-        if idx in cached_schema_linking_results:
-            schema_linking_result = cached_schema_linking_results[idx]
-        else:
-            schema_linking_result = run_candidate_schema_linking(
-                sample,
-                candidate_configs,
-                schema_manager,
-            )
-            with open(os.path.join(schema_linking_output_dir, f"{idx:4d}.json"), "w") as f:
-                json.dump(schema_linking_result, f, indent=2)
-        return dict(schema_linking_result)
-
     with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
         futures = [
             executor.submit(
-                maybe_run_candidate_schema_linking,
-                idx,
-                cached_schema_linking_results,
+                run_candidate_schema_linking,
                 sample,
                 candidate_configs,
                 schema_manager,
             )
             for idx, sample in enumerate(test_data)
+            if sample["question_id"] in missing_question_ids
         ]
         for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
-            schema_linking_outputs[idx] = future.result()
+            question_id = test_data[idx]["question_id"]
+            schema_linking_outputs[question_id] = future.result()
 
+    # check all question ids are in schema_linking_outputs
+    for sample in test_data:
+        assert sample["question_id"] in schema_linking_outputs
     del cached_schema_linking_results
     logger.info("Schema linking complete")
 
     #############################
     # question embedding
+    # outputs: EmbeddingResult
     #############################
     embedding_output_dir = os.path.join(args.output_path, "2_embeddings")
     os.makedirs(embedding_output_dir, exist_ok=True)
-
-    # check for cached npy embeddings file
-    _embeddings = None
-    if os.path.isfile(os.path.join(embedding_output_dir, "embeddings.npy")):
-        _embeddings = np.load(os.path.join(embedding_output_dir, "embeddings.npy"))
-    if _embeddings is not None and len(_embeddings) >= len(test_data):
-        embeddings = _embeddings.tolist()
-        logger.info(f"Loaded cached embeddings of size ({np.array(embeddings).shape})")
-    else:
-        logger.info("Generating embeddings:")
-        # try to load processed questions
-        if os.path.isfile(os.path.join(embedding_output_dir, "masked_questions.txt")):
-            with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "r") as f:
-                masked_questions = f.read().splitlines()
-        else:
-            logger.info("Processing questions...")
-            test_questions = [sample["question"] for sample in test_data]
-            masked_questions = [replace_entities_with_tokens(question) for question in tqdm.tqdm(test_questions)]
-            with open(os.path.join(embedding_output_dir, "masked_questions.txt"), "w") as f:
-                f.write("\n".join(masked_questions))
-        logger.info("Embedding processed questions...")
-        embedding_response: EmbeddingResult = embedder.embed(masked_questions, verbose=True)
-    embeddings = embedding_response.embedding
-    np.save(os.path.join(embedding_output_dir, "embeddings.npy"), embeddings)
-    logger.info(f"Embeddings of size ({np.array(embeddings).shape}) complete")
+    embedding_results: dict[int, EmbeddingResult] = {}
+    for file in os.listdir(embedding_output_dir):
+        if os.path.basename(file).startswith("embedding_qid-") and file.endswith(".json"):
+            # get id from filename
+            question_id = int(file.split(".")[0].split("-")[-1])
+            if question_id in test_question_ids:
+                with open(os.path.join(embedding_output_dir, file), "r") as f:
+                    embedding_results[question_id] = json.load(f)
+    logger.info(f"Loaded {len(embedding_results)} cached embedding results")
+    missing_samples = [sample for sample in test_data if sample["question_id"] not in embedding_results]
+    logger.info(f"Running embedding for {len(missing_samples)} samples")
+    # embed each sample and save via run_embedding()
+    new_embedding_results: list[EmbeddingResult] = run_embedding(
+        embedder,
+        missing_samples,
+        embedding_output_dir,
+        n_jobs=args.num_workers,
+    )
+    for idx, sample in enumerate(missing_samples):
+        question_id = sample["question_id"]
+        embedding_results[question_id] = new_embedding_results[idx]
+    # assert all question ids are in embedding_results
+    for sample in test_data:
+        assert sample["question_id"] in embedding_results
+    del new_embedding_results
+    logger.info("Embedding complete")
 
     #############################
     # few-shot retrieval
@@ -718,22 +744,30 @@ def main():
 
     cached_fewshot_retrieval_results: dict = {}
     for file in os.listdir(fewshot_retrieval_output_dir):
-        if file.endswith(".json") and file != "token_counts.json":
-            index = int(file.split(".")[0])
-            with open(os.path.join(fewshot_retrieval_output_dir, file), "r") as f:
-                cached_fewshot_retrieval_results[index] = json.load(f)
+        if os.path.basename(file).startswith("fewshot_qid-") and file.endswith(".json"):
+            question_id = int(file.split(".")[0].split("-")[-1])
+            if question_id in test_question_ids:
+                with open(os.path.join(fewshot_retrieval_output_dir, file), "r") as f:
+                    cached_fewshot_retrieval_results[question_id] = json.load(f)
+    missing_samples = [sample for sample in test_data if sample["question_id"] not in cached_fewshot_retrieval_results]
     logger.info(f"Loaded {len(cached_fewshot_retrieval_results)} cached fewshot retrieval results")
-    logger.info(f"Running fewshot retrieval for {len(test_data)-len(cached_fewshot_retrieval_results)} samples")
+    logger.info(f"Running fewshot retrieval for {len(missing_samples)} samples")
     # run fewshot retrieval for each sample
     fewshot_retrieval_results: dict = {}
-    for idx, sample in enumerate(tqdm.tqdm(test_data)):
-        if idx in cached_fewshot_retrieval_results:
-            fewshot_retrieval_result: list[dict] = cached_fewshot_retrieval_results[idx]
+    for sample in tqdm.tqdm(test_data):
+        question_id = sample["question_id"]
+        if question_id in cached_fewshot_retrieval_results:
+            fewshot_retrieval_result: list[dict] = cached_fewshot_retrieval_results[question_id]
         else:
-            fewshot_retrieval_result: list[dict] = run_fewshot_retrieval(embeddings[idx], retriever, top_k=top_k)
-        fewshot_retrieval_results[idx] = fewshot_retrieval_result
-        with open(os.path.join(fewshot_retrieval_output_dir, f"{idx:4d}.json"), "w") as f:
+            fewshot_retrieval_result: list[dict] = run_fewshot_retrieval(
+                embedding_results[question_id].embedding, retriever, top_k=top_k
+            )
+        fewshot_retrieval_results[question_id] = fewshot_retrieval_result
+        with open(os.path.join(fewshot_retrieval_output_dir, f"fewshot_qid-{question_id:4d}.json"), "w") as f:
             json.dump(fewshot_retrieval_result, f, indent=2)
+    # assert all question ids are in fewshot_retrieval_results
+    for sample in test_data:
+        assert sample["question_id"] in fewshot_retrieval_results
     del cached_fewshot_retrieval_results
     logger.info("Fewshot retrieval complete")
 
