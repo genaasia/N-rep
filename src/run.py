@@ -696,13 +696,6 @@ def main():
     if not os.path.isdir(args.test_database_path):
         raise FileNotFoundError(f"Databases directory not found: {args.test_database_path}")
 
-    # if output path does not exist, create it
-    if not os.path.isdir(args.output_path):
-        logger.info(f"Output directory not found, creating it: {args.output_path}")
-        os.makedirs(args.output_path)
-    else:
-        logger.info(f"Output directory found, existing outputs will be overwritten: {args.output_path}")
-
     # load candidate configs
     top_k = 3  # 3 by default, can override in candidate configs
     with open(args.candidate_configs_path, "r") as f:
@@ -719,6 +712,25 @@ def main():
         assert "schema_filtering" in config
         assert "generator" in config
         assert "model" in config
+
+    # if output path does not exist, create it
+    if not os.path.isdir(args.output_path):
+        logger.info(f"Output directory not found, creating it: {args.output_path}")
+        os.makedirs(args.output_path)
+        # save copy of candidate configs, to confirm against when loading
+        with open(os.path.join(args.output_path, "experiment_candidate_configs.yaml"), "w") as f:
+            yaml.dump(candidate_configs, f)
+    else:
+        logger.info(f"Output directory found, existing outputs will be overwritten: {args.output_path}")
+        # check if candidate configs match
+        if not os.path.isfile(os.path.join(args.output_path, "experiment_candidate_configs.yaml")):
+            raise FileNotFoundError("copy of experiment_candidate_configs.yaml not found in output directory")
+        with open(os.path.join(args.output_path, "experiment_candidate_configs.yaml"), "r") as f:
+            candidate_configs_copy: list[dict] = yaml.safe_load(f)
+            if "configs" not in candidate_configs_copy:
+                raise ValueError("candidate_configs_copy must contain a 'configs' key")
+            if candidate_configs != candidate_configs_copy["configs"]:
+                raise ValueError("candidate_configs mismatch! must have same configs for restoring data")
 
     # load test.json
     logger.info("Loading test data...")
