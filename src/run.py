@@ -1084,7 +1084,7 @@ def main():
 
     # save all
     for question_id, candidate_selection in candidate_selections.items():
-        with open(os.path.join(candidate_selection_output_dir, f"{question_id:04d}.txt"), "w") as f:
+        with open(os.path.join(candidate_selection_output_dir, f"{question_id:04d}.json"), "w") as f:
             f.write(candidate_selection.model_dump_json(indent=2))
 
     logger.info("Candidate selection complete")
