@@ -29,6 +29,15 @@ class TokenUsage(BaseModel):
     output_tokens: int
     total_tokens: int
 
+    # allow adding two TokenUsages
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        return TokenUsage(
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+        )
+
 
 class GenerationResult(BaseModel):
     """result of a single generation call"""
