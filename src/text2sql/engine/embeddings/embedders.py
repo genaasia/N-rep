@@ -16,6 +16,7 @@ from text2sql.utils import CharacterCounter
 class EmbeddingResult(BaseModel):
     """result of a single embedding call"""
 
+    texts: list[str]
     embedding: list[float] | list[list[float]]
     input_characters: int
     inf_time_ms: int
@@ -41,13 +42,14 @@ class BaseEmbedder(ABC):
         """embed a list of texts, with optional progress bar"""
         character_count: int = 0
         inf_time_ms: int = 0
+        input_texts: list[str] = []
         embeddings: list[list[float]] = []
         iter_list = range(0, len(samples), self.batch_size)
         if verbose:
             iter_list = tqdm.tqdm(iter_list)
-
         for i in iter_list:
             batch_inputs = [text[: self.max_chars] for text in samples[i : i + self.batch_size]]
+            input_texts.extend(batch_inputs)
             character_count += sum(len(text) for text in batch_inputs)
             start_time = time.time()
             batch_embeddings = self._embed_batch(batch_inputs)
@@ -56,14 +58,21 @@ class BaseEmbedder(ABC):
             inf_time_ms += int((end_time - start_time) * 1000)
             if self.sleep_ms:
                 time.sleep(self.sleep_ms / 1000)
-        return EmbeddingResult(embedding=embeddings, input_characters=character_count, inf_time_ms=inf_time_ms)
+        return EmbeddingResult(
+            texts=input_texts,
+            embedding=embeddings,
+            input_characters=character_count,
+            inf_time_ms=inf_time_ms,
+        )
 
     def embed_text(self, text: str) -> EmbeddingResult:
         """embed a single text"""
+        texts = [text[: self.max_chars]]
         start_time = time.time()
-        embedding = self._embed_batch([text[: self.max_chars]])[0]
+        embedding = self._embed_batch(texts)[0]
         end_time = time.time()
         return EmbeddingResult(
+            texts=texts,
             embedding=embedding,
             input_characters=len(text[: self.max_chars]),
             inf_time_ms=int((end_time - start_time) * 1000),
