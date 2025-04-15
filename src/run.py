@@ -35,7 +35,7 @@ from text2sql.utils import parse_json_from_prediction, replace_entities_with_tok
 from text2sql.pipeline.selection import select_best_candidate
 
 
-class SchemaLinkingOutput(BaseModel):
+class SchemaLinkingInfo(BaseModel):
     question_id: int
     model_name: str
     schema_format: str
@@ -49,29 +49,41 @@ class SchemaLinkingOutput(BaseModel):
     full_description: str
 
 
-class CandidateGenerationOutput(BaseModel):
+class RewriteInfo(BaseModel):
     question_id: int
+    original_sql: str
+    rewritten_sql: str
+    is_processed: bool  # whether the candidate went through the rewrite check, whether it was rewritten or not
+    is_rewritten: bool  # whether the candidate was rewritten successfully (even if rewritten sql is same)
+    messages: list[dict]
+    generator_output: GenerationResult | None
+
+
+class Candidate(BaseModel):
+    question_id: int
+    config_index: int
+    sample: dict
     schema_format: str
     schema_filtering: Literal["none", "table", "column"]
     messages: list[dict]
     generator_output: GenerationResult
     candidate_sql: str
+    rewrite_checked: bool = False
+    rewrite_info: list[RewriteInfo] = []
 
 
-class CandidateGenerationOutputBundle(BaseModel):
+class CandidateList(BaseModel):
     question_id: int
     candidate_configs: list[dict]
-    candidates: list[CandidateGenerationOutput]
+    candidates: list[Candidate]
 
 
-class RewriteOutput(BaseModel):
+class CandidateSelection(BaseModel):
     question_id: int
-    original_sql: str
-    rewritten_sql: str
-    is_rewritten: bool
-    messages: list[dict]
-    all_messages: list[dict] = []
-    generator_output: GenerationResult | None
+    db_id: str  # for formatting output
+    candidate_config: dict
+    selected_idx: int
+    selected_sql: str
 
 
 def prepare_dataset_information(
@@ -107,12 +119,9 @@ def prepare_fewshot_retriever(embeddings_path: str, embeddings_data_path: str) -
     logger.info(f"Loading embeddings data from {embeddings_data_path}...")
     embeddings_data = json.load(open(embeddings_data_path))
     if len(embeddings) != len(embeddings_data):
-        logger.error(
-            f"Embeddings and embeddings data must have the same length: {len(embeddings)} != {len(embeddings_data)}"
-        )
-        raise ValueError(
-            f"Embeddings and embeddings data must have the same length: {len(embeddings)} != {len(embeddings_data)}"
-        )
+        err_message = f"Embeddings and data length mistmatch: {len(embeddings)} != {len(embeddings_data)}"
+        logger.error(err_message)
+        raise ValueError(err_message)
     retriever = LocalRetriever(embeddings, embeddings_data)
     return retriever
 
@@ -156,7 +165,7 @@ def run_schema_linking(
     sample: dict,
     schema_format: str,
     schema_linking_generator: str,
-) -> SchemaLinkingOutput:
+) -> SchemaLinkingInfo:
     """run the schema linking task
 
     Args:
@@ -192,7 +201,7 @@ def run_schema_linking(
         column_description = schema_description
         table_description = schema_description
 
-    return SchemaLinkingOutput(
+    return SchemaLinkingInfo(
         question_id=question_id,
         model_name=model_name,
         schema_format=schema_format,
@@ -211,7 +220,7 @@ def run_candidate_schema_linking(
     sample: dict,
     candidate_configs: list[dict],
     schema_manager: SchemaManager,
-) -> list[SchemaLinkingOutput]:
+) -> list[SchemaLinkingInfo]:
     """run schema linking for all candidate configs
 
     Args:
@@ -219,11 +228,10 @@ def run_candidate_schema_linking(
         candidate_configs: list of candidate configs
         schema_manager: the schema manager
     Returns:
-        schema_linking_outputs: defaultdict of schema linking outputs (model > format > outputs)
+        schema_linking_predictions: list of SchemaLinkingInfo predictions
     """
     jobs: list[dict] = []
     job_configs = []
-    schema_linking_outputs = defaultdict(lambda: defaultdict(dict))
     for candidate_config in candidate_configs:
         schema_format = candidate_config["schema_format"]
         schema_linking_generator_name = candidate_config["generator"]
@@ -261,7 +269,7 @@ def run_candidate_schema_linking(
         return run_schema_linking(**job_dict)
 
     with ThreadPool(len(jobs)) as pool:
-        schema_linking_predictions: list[SchemaLinkingOutput] = list(pool.imap(run_schema_linking_wrapper, jobs))
+        schema_linking_predictions: list[SchemaLinkingInfo] = list(pool.imap(run_schema_linking_wrapper, jobs))
 
     return schema_linking_predictions
 
@@ -286,11 +294,12 @@ def run_fewshot_retrieval(
 def run_sql_generation(
     generator: BaseGenerator,
     sample: dict,
+    config_index: int,
     few_shot_results: list[dict],
-    schema_linking_outputs: SchemaLinkingOutput,
+    schema_linking_outputs: SchemaLinkingInfo,
     schema_format: str,
     schema_filtering: Literal["none", "table", "column"],
-) -> CandidateGenerationOutput:
+) -> Candidate:
     """run the sql generation task"""
     # format messages
     few_shot_examples: list[dict] = [result for result in few_shot_results if schema_format in result["data"]]
@@ -318,8 +327,10 @@ def run_sql_generation(
     sql_prediction = extract_first_code_block(raw_prediction)
     if not sql_prediction:
         sql_prediction = raw_prediction
-    return CandidateGenerationOutput(
+    return Candidate(
         question_id=sample["question_id"],
+        config_index=config_index,
+        sample=sample,
         schema_format=schema_format,
         schema_filtering=schema_filtering,
         messages=messages,
@@ -328,13 +339,13 @@ def run_sql_generation(
     )
 
 
-def run_candidate_sql_generation(
+def run_candidate_sql_generations(
     sample: dict,
     generator: BaseGenerator,
     candidate_configs: list[dict],
-    candidate_schema_linking_outputs: dict[str, dict[str, SchemaLinkingOutput]],
+    candidate_schema_linking_outputs: dict[str, dict[str, SchemaLinkingInfo]],
     few_shot_results: list[dict],
-) -> list[CandidateGenerationOutput]:
+) -> list[Candidate]:
     """run the candidate sql generation task
 
     Args:
@@ -348,16 +359,17 @@ def run_candidate_sql_generation(
     """
     # built args
     gen_args: list[dict] = []
-    for candidate_config in candidate_configs:
+    for candidate_idx, candidate_config in enumerate(candidate_configs):
         model = candidate_config["model"]
         schema_format = candidate_config["schema_format"]
         schema_filtering = candidate_config["schema_filtering"]
-        schema_linking_output: SchemaLinkingOutput = candidate_schema_linking_outputs[model][schema_format]
+        schema_linking_output: SchemaLinkingInfo = candidate_schema_linking_outputs[model][schema_format]
 
         gen_args.append(
             {
                 "generator": generator,
                 "sample": sample,
+                "config_index": candidate_idx,
                 "few_shot_results": few_shot_results,
                 "schema_linking_outputs": schema_linking_output,
                 "schema_format": schema_format,
@@ -374,49 +386,53 @@ def run_candidate_sql_generation(
             return "", []
 
     with ThreadPool(len(gen_args)) as pool:
-        results: list[CandidateGenerationOutput] = list(pool.imap(run_sql_generation_wrapper, gen_args))
+        results: list[Candidate] = list(pool.imap(run_sql_generation_wrapper, gen_args))
 
     return results
 
 
 def run_sql_rewrite(
     generator: BaseGenerator,
-    sample: dict,
-    original_sql: str,
+    candidate: Candidate,
     schema_description: str,
-) -> RewriteOutput:
-    """run the sql generation task"""
+) -> RewriteInfo:
+    """run the sql rewriting task"""
+    is_rewritten = False
+    original_sql = candidate.candidate_sql
     # format messages
     message_formatter = RewritePromptFormatter(
         database_type="sqlite",
     )
     messages = message_formatter.generate_messages(
         schema_description=schema_description,
-        query=sample["question"],
+        query=candidate.sample["question"],
         predicted_sql=original_sql,
     )
     # run inference
-    prediction_output: GenerationResult = generator.generate(messages, temperature=0.0)
-    raw_prediction = prediction_output.text
+    rewrite_output: GenerationResult = generator.generate(messages, temperature=0.0)
+    raw_prediction = rewrite_output.text
     sql_prediction = extract_first_code_block(raw_prediction)
+    is_rewritten = True
     if not sql_prediction:
         sql_prediction = raw_prediction
-    return RewriteOutput(
-        question_id=sample["question_id"],
+        is_rewritten = False
+    return RewriteInfo(
+        question_id=candidate.question_id,
         original_sql=original_sql,
         rewritten_sql=sql_prediction,
+        is_processed=True,
+        is_rewritten=is_rewritten,
         messages=messages,
-        generator_output=prediction_output,
-        is_rewritten=True if sql_prediction != original_sql else False,
+        generator_output=rewrite_output,
     )
 
 
-def check_need_rewrite(result):
-    if len(result) == 0:
+def check_need_rewrite(execution_results: list[dict]) -> bool:
+    if len(execution_results) == 0:
         return True
     else:
         has_non_none = False
-        for result_row in result:
+        for result_row in execution_results:
             for value in result_row.values():
                 if value is not None and value != "" and value != [] and value != 0 and value != 0.0:
                     has_non_none = True
@@ -428,7 +444,7 @@ def check_need_rewrite(result):
     return False
 
 
-def get_filtered_schema_description_for_rewrite(db_name, schema, prediction):
+def get_filtered_schema_description_for_rewrite(db_name: str, schema: dict, prediction: str) -> str:
     table_names = get_table_names_from_query(prediction)
     filtered_schema = {"tables": {}}
     for table_name in table_names:
@@ -438,23 +454,28 @@ def get_filtered_schema_description_for_rewrite(db_name, schema, prediction):
     return schema_to_datagrip_format(db_name, filtered_schema)
 
 
-def run_rewrite_check(
-    sample: dict, predicted_sql: str, dataset: BaseDataset, generator: BaseGenerator, schema_manager: SchemaManager
-) -> RewriteOutput:
-    database = sample["db_id"]
+def run_candidate_rewrite_check(
+    candidate: Candidate,
+    dataset: BaseDataset,
+    generator: BaseGenerator,
+    schema_manager: SchemaManager,
+) -> Candidate:
+    database = candidate.sample["db_id"]
     max_retries = 3
     attempt = 0
+
+    predicted_sql: str = candidate.candidate_sql
     current_sql = predicted_sql
-    all_messages = []
 
     # default output
-    rewritten_output = RewriteOutput(
-        question_id=sample["question_id"],
+    rewritten_output = RewriteInfo(
+        question_id=candidate.question_id,
         original_sql=predicted_sql,
         rewritten_sql=predicted_sql,
+        is_processed=False,
+        is_rewritten=False,
         messages=[],
         generator_output=None,
-        is_rewritten=False,
     )
 
     while attempt < max_retries:
@@ -464,7 +485,11 @@ def run_rewrite_check(
 
         # If no rewrite needed, return current SQL
         if not check_need_rewrite(execution_results):
-            return rewritten_output
+            rewritten_output.is_processed = True
+            rewritten_output.is_rewritten = False
+            candidate.rewrite_info.append(rewritten_output)
+            candidate.rewrite_checked = True
+            return candidate
 
         # Get filtered schema for rewrite
         filtered_schema_description = get_filtered_schema_description_for_rewrite(
@@ -473,10 +498,9 @@ def run_rewrite_check(
 
         try:
             # Attempt rewrite
-            rewritten_output: RewriteOutput = run_sql_rewrite(
-                generator, sample, current_sql, filtered_schema_description
+            rewritten_output: RewriteInfo = run_sql_rewrite(
+                generator, candidate, current_sql, filtered_schema_description
             )
-            all_messages.extend(rewritten_output.messages)
 
             current_sql = rewritten_output.rewritten_sql
             logger.debug(f"Rewrite attempt {attempt + 1}, SQL: {current_sql}")
@@ -487,24 +511,36 @@ def run_rewrite_check(
 
         attempt += 1
 
-    rewritten_output.all_messages = all_messages
-
-    return rewritten_output
+    candidate.rewrite_info.append(rewritten_output)
+    candidate.rewrite_checked = True  # should this be true even if max tries exceeded?
+    return candidate
 
 
 def run_candidate_selection(
+    candidates: list[Candidate],
+    candidate_configs: list[dict],
     dataset: BaseDataset,
     schema_manager: SchemaManager,
     generator: BaseGenerator,
-    sample: dict,
-    candidate_sqls: list[str],
     chase: bool = False,
-) -> str:
+) -> CandidateSelection:
     """run the candidate selection task"""
     # for each sample, prepare the execution result dict
-    database: str = sample["db_id"]
+    question_id: int = candidates[0].question_id
+    database: str = candidates[0].sample["db_id"]
+    question: str = candidates[0].sample["question"]
+    evidence: str = candidates[0].sample.get("evidence", "")
+    if len(candidates) == 1:
+        return CandidateSelection(
+            question_id=candidates[0].question_id,
+            db_id=database,
+            candidate_config=candidate_configs[0],
+            selected_idx=0,
+            selected_sql=candidates[0].candidate_sql,
+        )
     sample_dicts: list[dict] = []
-    for sql_query in candidate_sqls:
+    for config_idx, candidate in enumerate(candidates):
+        sql_query = candidate.candidate_sql
         execution_result_dict: dict = dataset.validate_query(database, sql_query)
         execution_results: list[dict] = execution_result_dict.get("execution_result", [])
         is_valid = execution_result_dict.get("validated", False)
@@ -521,12 +557,22 @@ def run_candidate_selection(
         predictions=sample_dicts,
         schema_manager=schema_manager,
         db_id=database,
-        question=sample["question"],
-        evidence=sample.get("evidence", ""),
+        question=question,
+        evidence=evidence,
         generator=generator,
         chase=chase,
     )
-    return best_sql
+    # get the (first) index of the best sql
+    sqls = [candidate.candidate_sql for candidate in candidates]
+    sql_index = sqls.index(best_sql)
+
+    return CandidateSelection(
+        question_id=question_id,
+        db_id=database,
+        candidate_config=candidate_configs[sql_index],
+        selected_idx=sql_index,
+        selected_sql=best_sql,
+    )
 
 
 def main():
@@ -750,7 +796,7 @@ def main():
             question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(schema_linking_output_dir, file), "r") as f:
-                    schema_linking_output: SchemaLinkingOutput = SchemaLinkingOutput.model_validate_json(f.read())
+                    schema_linking_output: SchemaLinkingInfo = SchemaLinkingInfo.model_validate_json(f.read())
                     model_name = schema_linking_output.model_name
                     schema_format = schema_linking_output.schema_format
                     if question_id not in schema_linking_results:
@@ -783,7 +829,7 @@ def main():
         ]
         for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
             question_id = test_data[idx]["question_id"]
-            predicted_schema_linking_outputs: list[SchemaLinkingOutput] = future.result()
+            predicted_schema_linking_outputs: list[SchemaLinkingInfo] = future.result()
             for output in predicted_schema_linking_outputs:
                 model_name = output.model_name
                 f_model_name = model_name.replace("_", "").replace(" ", "")
@@ -830,7 +876,7 @@ def main():
     for file in os.listdir(embedding_output_dir):
         if os.path.basename(file).startswith("embedding_qid-") and file.endswith(".json"):
             # get id from filename
-            question_id = int(file.split(".")[0].split("-")[-1])
+            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(embedding_output_dir, file), "r") as f:
                     embedding_results[question_id] = json.load(f)
@@ -862,7 +908,7 @@ def main():
     fewshot_retrieval_results: dict = {}
     for file in os.listdir(fewshot_retrieval_output_dir):
         if os.path.basename(file).startswith("fewshot_qid-") and file.endswith(".json"):
-            question_id = int(file.split(".")[0].split("-")[-1])
+            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(fewshot_retrieval_output_dir, file), "r") as f:
                     fewshot_retrieval_results[question_id] = json.load(f)
@@ -892,33 +938,29 @@ def main():
     sql_generation_output_dir = os.path.join(args.output_path, "4_candidate_generation")
     os.makedirs(sql_generation_output_dir, exist_ok=True)
 
-    sql_generation_results: dict[str, list[CandidateGenerationOutput]] = {}
+    sql_candidate_lists: dict[int, list[Candidate]] = {}
     for file in os.listdir(sql_generation_output_dir):
         if os.path.basename(file).startswith("candidate_sql_qid-") and file.endswith(".json"):
-            question_id = int(file.split(".")[0].split("-")[-1])
+            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(sql_generation_output_dir, file), "r") as f:
-                    bundle = CandidateGenerationOutputBundle.model_validate_json(f.read())
+                    bundle = CandidateList.model_validate_json(f.read())
                     # check candidate_configs match
                     if len(bundle.candidate_configs) != len(candidate_configs):
-                        logger.warning(
-                            f"cached candidate_configs do not match current candidate_configs for question {question_id} (lens differ)"
-                        )
+                        logger.warning(f"[{question_id}] cached, current candidate_configs mismatch: lens differ")
                         continue
                     if any(config != candidate_configs[i] for i, config in enumerate(bundle.candidate_configs)):
-                        logger.warning(
-                            f"cached candidate_configs do not match current candidate_configs for question {question_id} (configs differ)"
-                        )
+                        logger.warning(f"[{question_id}] cached, current candidate_configs mismatch: contents differ")
                         continue
-                    sql_generation_results[question_id] = bundle.candidates
-    logger.info(f"Loaded {len(sql_generation_results)} cached sql generation results")
-    missing_samples = [sample for sample in test_data if sample["question_id"] not in sql_generation_results]
+                    sql_candidate_lists[question_id] = bundle.candidates
+    logger.info(f"Loaded {len(sql_candidate_lists)} cached sql generation results")
+    missing_samples = [sample for sample in test_data if sample["question_id"] not in sql_candidate_lists]
     logger.info(f"Running sql generation for {len(missing_samples)} samples")
     # run sql generation for each sample, using threading executor
     with ThreadPoolExecutor(max_workers=min(2, args.num_workers)) as executor:
         futures = [
             executor.submit(
-                run_candidate_sql_generation,
+                run_candidate_sql_generations,
                 sample,
                 gcp_generator_candidate,
                 candidate_configs,
@@ -928,125 +970,133 @@ def main():
             for sample in missing_samples
         ]
         for future in tqdm.tqdm(futures, total=len(test_data)):
-            candidates: list[CandidateGenerationOutput] = future.result()
+            candidates: list[Candidate] = future.result()
             if len(candidates) == 0:
                 logger.warning(f"No candidates found for sample {sample['question_id']}")
                 continue
             question_id = candidates[0].question_id
-            output = CandidateGenerationOutputBundle(
-                question_id=question_id,
-                candidate_configs=candidate_configs,
-                candidates=candidates,
-            )
-            with open(os.path.join(sql_generation_output_dir, f"candidate_sql_qid-{question_id:04d}.json"), "w") as f:
-                f.write(output.model_dump_json(indent=2))
-            sql_generation_results[question_id] = candidates
+            sql_candidate_lists[question_id] = candidates
+    # check test_data sample["question_id"] in sql_candidate_lists
+    for sample in test_data:
+        assert sample["question_id"] in sql_candidate_lists
+    # check for each list[Candidate], question_ids and samples match
+    for question_id, candidates in sql_candidate_lists.items():
+        for candidate in candidates:
+            assert candidate.question_id == question_id
+            assert candidate.sample == sample
+    # check candidate list all have same lengths
+    for question_id, candidates in sql_candidate_lists.items():
+        assert len(candidates) == len(candidate_configs)
+    # save all
+    for question_id, candidates in sql_candidate_lists.items():
+        output = CandidateList(
+            question_id=question_id,
+            candidate_configs=candidate_configs,
+            candidates=candidates,
+        )
+        with open(os.path.join(sql_generation_output_dir, f"candidates_qid-{question_id:04d}.json"), "w") as f:
+            f.write(output.model_dump_json(indent=2))
     logger.info("Sql generation complete")
 
     #############################
     # rewriting
     #############################
-    rewritten_results_output_dir = os.path.join(args.output_path, "5_rewritten_results")
-    os.makedirs(rewritten_results_output_dir, exist_ok=True)
-
-    cached_rewritten_results: dict = {}
-    for file in os.listdir(rewritten_results_output_dir):
-        if file.endswith(".json") and file != "token_counts.json" and not file.endswith("_messages.json"):
-            index = int(file.split(".")[0])
-            with open(os.path.join(rewritten_results_output_dir, file), "r") as f:
-                cached_rewritten_results[index] = json.load(f)
-    logger.info(f"Loaded {len(cached_rewritten_results)} cached rewritten results")
-    logger.info(f"Running rewrite check for {len(test_data)-len(cached_rewritten_results)} samples")
-
-    # Flatten the sql_generation_results dict into a list of tuples (idx, sql_idx, sql)
+    # rewriting is using same Candidates as sql generation so do not re-load data, just save updated candidates
+    # Flatten the sql_generation_results dict into a list of tuples (question id, config index, sql)
     flattened_sqls = []
-    for idx, candidate_generation_outputs in sql_generation_results.items():
-        for sql_idx, candidate_generation_output in enumerate(candidate_generation_outputs):
-            flattened_sqls.append((idx, sql_idx, candidate_generation_output.candidate_sql))
+    already_rewritten: int = 0
+    for question_id, candidate_list in sql_candidate_lists.items():
+        for config_idx, candidate in enumerate(candidate_list):
+            # skip if already checked
+            if candidate.rewrite_checked:
+                already_rewritten += 1
+                continue
+            flattened_sqls.append((question_id, config_idx, candidate))
+    logger.info(f"Skipping {already_rewritten} already rewritten candidates")
+    logger.info(f"Running rewrite check for {len(flattened_sqls)} candidates")
 
     # Function to run rewrite check on a single SQL
-    def run_rewrite_check_wrapper(params):
-        idx, sql_idx, sql = params
-        sample = test_data[idx]
+    def run_rewrite_check_wrapper(params) -> tuple[int, int, str, Candidate]:
+        question_id, config_idx, candidate = params
+        assert type(candidate) == Candidate
         try:
-            output: RewriteOutput = run_rewrite_check(
-                sample=sample,
-                predicted_sql=sql,
+            output: Candidate = run_candidate_rewrite_check(
+                candidate=candidate,
                 dataset=dataset,
                 generator=gcp_generator_candidate,
                 schema_manager=schema_manager,
             )
-            return idx, sql_idx, output.rewritten_sql, output
+            return question_id, config_idx, output.candidate_sql, output
         except Exception as e:
-            logger.error(
-                f"Error in rewrite check for idx {idx}, sql_idx {sql_idx}: {str(e)}: output type: {type(output).__name__}"
-            )
+            logger.error(f"Error in rewrite check for idx {question_id}, sql_idx {config_idx}: {str(e)}")
             logger.error(f"output: {output}")
-            return idx, sql_idx, sql, None  # Return original SQL if rewrite fails
+            return question_id, config_idx, candidate.candidate_sql, candidate  # Return original SQL if rewrite fails
 
     # Run rewrite check in parallel
-    rewritten_sqls = {}
     if flattened_sqls:
         with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
             futures = [executor.submit(run_rewrite_check_wrapper, params) for params in flattened_sqls]
             for future in tqdm.tqdm(futures, total=len(flattened_sqls), desc="Running rewrite check"):
-                tuple_result = future.result()
-                idx, sql_idx, rewritten_sql, output = tuple_result
-                if idx not in rewritten_sqls:
-                    rewritten_sqls[idx] = [""] * len(sql_generation_results[idx])
-                rewritten_sqls[idx][sql_idx] = rewritten_sql
+                tuple_result: tuple[int, int, str, Candidate] = future.result()
+                question_id, config_idx, sql, candidate = tuple_result
+                # update candidate in sql_candidate_lists
+                sql_candidate_lists[question_id][config_idx] = candidate
 
-    # Save rewritten results
+    # assert all have been rewritten
+    for question_id, candidate_list in sql_candidate_lists.items():
+        for candidate in candidate_list:
+            assert candidate.rewrite_checked
 
-    # Calculate and log rewrite statistics
-    total_sqls = sum(len(sqls) for sqls in sql_generation_results.values())
-    rewritten_sqls_count = 0
+    # (overwrite) save data
+    for question_id, candidate_list in sql_candidate_lists.items():
+        bundle = CandidateList(
+            question_id=question_id,
+            candidate_configs=candidate_configs,
+            candidates=candidate_list,
+        )
+        with open(os.path.join(sql_generation_output_dir, f"candidates_qid-{question_id:04d}.json"), "w") as f:
+            f.write(output.model_dump_json(indent=2))
 
-    for idx, original_sqls in sql_generation_results.items():
-        rewritten_sqls_list = rewritten_sqls.get(idx, [])
-        for i, original_sql in enumerate(original_sqls):
-            if i < len(rewritten_sqls_list) and rewritten_sqls_list[i] != original_sql:
-                rewritten_sqls_count += 1
-
-    rewrite_percentage = (rewritten_sqls_count / total_sqls) * 100 if total_sqls > 0 else 0
-    logger.info(
-        f"Rewrite statistics: {rewritten_sqls_count} out of {total_sqls} SQL queries needed rewriting ({rewrite_percentage:.2f}%)"
-    )
     logger.info("Rewrite check complete")
 
     #############################
     # candidate selection
     #############################
-    candidate_selection_output_dir = os.path.join(args.output_path, "6_candidate_selection")
+    candidate_selection_output_dir = os.path.join(args.output_path, "5_candidate_selection")
     os.makedirs(candidate_selection_output_dir, exist_ok=True)
 
-    cached_candidate_selection_results: dict = {}
+    candidate_selections: dict[int, CandidateSelection] = {}
     for file in os.listdir(candidate_selection_output_dir):
-        if file.endswith(".txt") and file != "token_counts.json":
-            index = int(file.split(".")[0])
-            with open(os.path.join(candidate_selection_output_dir, file), "r") as f:
-                cached_candidate_selection_results[index] = f.read()
-    logger.info(f"Loaded {len(cached_candidate_selection_results)} cached candidate selection results")
-    logger.info(f"Running candidate selection for {len(test_data)-len(cached_candidate_selection_results)} samples")
+        if os.path.basename(file).startswith("selection_") and file.endswith(".json"):
+            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
+            if question_id in test_question_ids:
+                with open(os.path.join(candidate_selection_output_dir, file), "r") as f:
+                    candidate_selections[question_id] = CandidateSelection.model_validate_json(f.read())
+    logger.info(f"Loaded {len(candidate_selections)} cached candidate selection results")
+    missing_samples = [s for s in test_data if s["question_id"] not in candidate_selections]
+    logger.info(f"Running candidate selection for {len(missing_samples)} samples")
     # run candidate selection for each sample
-    candidate_selection_results: dict = {}
-    for idx, sample in enumerate(tqdm.tqdm(test_data)):
-        if idx in cached_candidate_selection_results:
-            candidate_selection_result = cached_candidate_selection_results[idx]
-        else:
-            # Use rewritten SQLs if available, otherwise use original SQLs
-            candidate_sqls = rewritten_sqls.get(idx, sql_generation_results[idx])
-            candidate_selection_result = run_candidate_selection(
-                dataset=dataset,
-                schema_manager=schema_manager,
-                sample=sample,
-                candidate_sqls=candidate_sqls,
-                generator=gcp_generator_selection,
-                chase=True,
-            )
-        candidate_selection_results[idx] = candidate_selection_result
-        with open(os.path.join(candidate_selection_output_dir, f"{idx:04d}.txt"), "w") as f:
-            f.write(candidate_selection_result)
+    for sample in tqdm.tqdm(test_data):
+        question_id = sample["question_id"]
+        candidate_list: list[Candidate] = sql_candidate_lists[question_id]
+        candidate_selection_result: CandidateSelection = run_candidate_selection(
+            candidates=candidate_list,
+            candidate_configs=candidate_configs,
+            dataset=dataset,
+            schema_manager=schema_manager,
+            generator=gcp_generator_selection,
+            chase=True,
+        )
+        candidate_selections[question_id] = candidate_selection_result
+
+    # assert all question ids are in candidate_selections
+    for sample in test_data:
+        assert sample["question_id"] in candidate_selections
+
+    # save all
+    for question_id, candidate_selection in candidate_selections.items():
+        with open(os.path.join(candidate_selection_output_dir, f"{question_id:04d}.txt"), "w") as f:
+            f.write(candidate_selection.model_dump_json(indent=2))
 
     logger.info("Candidate selection complete")
 
@@ -1055,22 +1105,17 @@ def main():
     #############################
     # check idx == question_id and add \t----- bird -----\t<db_id>
     predictions = {}
-    for idx in range(len(candidate_selection_results)):
-        question_id = test_data[idx]["question_id"]
-        db_id = test_data[idx]["db_id"]
-        prediction = candidate_selection_results[idx]
+    # get ordered question ids
+    ordered_question_ids = sorted(list(candidate_selections.keys()))
+    for question_id in ordered_question_ids:
+        selection: CandidateSelection = candidate_selections[question_id]
+        db_id = selection.db_id
+        prediction = selection.selected_sql
         predictions[str(question_id)] = prediction + f"\t----- bird -----\t{db_id}"
     if len(predictions) != len(test_data):
         raise ValueError(f"predictions length ({len(predictions)}) does not match test data length ({len(test_data)})")
     with open(os.path.join(args.output_path, "predict.json"), "w") as f:
         json.dump(predictions, f, indent=2)
-
-    total_dict = {
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0,
-        "call_count": 0,
-    }
 
     # todo: calculate final token counts
 
