@@ -1,4 +1,5 @@
 import argparse
+import copy
 import json
 import os
 import sys
@@ -23,7 +24,7 @@ from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
 from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder, EmbeddingResult
-from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator, GenerationResult
+from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator, GenerationResult, TokenUsage
 from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
 from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.prompts.formatters import RewritePromptFormatter
@@ -86,6 +87,27 @@ class CandidateSelection(BaseModel):
     candidate_config: dict
     selected_idx: int
     selected_sql: str
+
+
+class TotalTokenUsage(BaseModel):
+    label: str = ""
+    calls: int = 0
+    tokens: TokenUsage = TokenUsage(prompt_tokens=0, output_tokens=0, total_tokens=0)
+
+    # allow adding to TokenUsage. add to internal tokens TokenUsage and increment calls by one
+    def __add__(self, other: TokenUsage) -> "TotalTokenUsage":
+        self.tokens += other
+        self.calls += 1
+        return self
+
+
+class TokenReport(BaseModel):
+    total: TotalTokenUsage
+    schema_linking: dict[str, TotalTokenUsage]
+    sql_generation: TotalTokenUsage
+    sql_generation_rewrite: TotalTokenUsage
+    candidate_selection: TotalTokenUsage
+    embedding: dict
 
 
 def prepare_dataset_information(
@@ -648,6 +670,13 @@ def main():
         default=False,
         help="save messages to separate files for debugging",
     )
+    # skip test boolean
+    parser.add_argument(
+        "--skip-test",
+        action="store_true",
+        default=False,
+        help="skip llm test",
+    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -753,7 +782,7 @@ def main():
         sleep_ms=10,
     )
 
-    logger.info("Creating & testing azure generator...")
+    logger.info("Creating generators...")
     test_messages = [{"role": "user", "content": "What is the capital of South Korea? Answer in one word."}]
 
     test_azure_generator = AzureGenerator(
@@ -762,10 +791,6 @@ def main():
         azure_endpoint=os.getenv("AZURE_OPENAI_API_ENDPOINT"),
         api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
     )
-    p = test_azure_generator.generate(test_messages, temperature=0.0)
-    logger.info(f"Azure generator test response: '{p}'")
-
-    logger.info("Creating & testing Gemini generator...")
     gcp_generator_candidate = GCPGenerator(
         model="gemini-1.5-flash",
         api_key=os.getenv("GCP_KEY"),
@@ -775,8 +800,11 @@ def main():
         api_key=os.getenv("GCP_KEY"),
     )
 
-    p = gcp_generator_candidate.generate(test_messages, temperature=0.0)
-    logger.info(f"Gemini generator test response: '{p}'")
+    if not args.skip_test:
+        p = test_azure_generator.generate(test_messages, temperature=0.0)
+        logger.info(f"Azure generator test response: '{p}'")
+        p = gcp_generator_candidate.generate(test_messages, temperature=0.0)
+        logger.info(f"Gemini generator test response: '{p}'")
 
     #############################
     # preprocessing
@@ -878,7 +906,7 @@ def main():
             question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(embedding_output_dir, file), "r") as f:
-                    embedding_results[question_id] = json.load(f)
+                    embedding_results[question_id] = EmbeddingResult.model_validate_json(f.read())
     logger.info(f"Loaded {len(embedding_results)} cached embedding results")
     missing_samples = [sample for sample in test_data if sample["question_id"] not in embedding_results]
     logger.info(f"Running embedding for {len(missing_samples)} samples")
@@ -939,7 +967,7 @@ def main():
 
     sql_candidate_lists: dict[int, list[Candidate]] = {}
     for file in os.listdir(sql_generation_output_dir):
-        if os.path.basename(file).startswith("candidate_sql_qid-") and file.endswith(".json"):
+        if os.path.basename(file).startswith("candidates_qid-") and file.endswith(".json"):
             question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(sql_generation_output_dir, file), "r") as f:
@@ -951,6 +979,12 @@ def main():
                     if any(config != candidate_configs[i] for i, config in enumerate(bundle.candidate_configs)):
                         logger.warning(f"[{question_id}] cached, current candidate_configs mismatch: contents differ")
                         continue
+                    for candidate in bundle.candidates:
+                        if candidate.question_id != question_id:
+                            logger.warning(
+                                f"[{question_id}] cached, candidate question_id mismatch: {candidate.question_id}"
+                            )
+                            continue
                     sql_candidate_lists[question_id] = bundle.candidates
     logger.info(f"Loaded {len(sql_candidate_lists)} cached sql generation results")
     missing_samples = [sample for sample in test_data if sample["question_id"] not in sql_candidate_lists]
@@ -975,28 +1009,26 @@ def main():
                 continue
             question_id = candidates[0].question_id
             sql_candidate_lists[question_id] = candidates
+            # validate and save while running
+            for candidate in candidates:
+                assert candidate.question_id == question_id
+            if len(candidates) > 1:
+                for candidate in candidates[1:]:
+                    assert candidate.sample == candidates[0].sample
+            output = CandidateList(
+                question_id=question_id,
+                candidate_configs=candidate_configs,
+                candidates=candidates,
+            )
+            with open(os.path.join(sql_generation_output_dir, f"candidates_qid-{question_id:04d}.json"), "w") as f:
+                f.write(output.model_dump_json(indent=2))
+
     # check test_data sample["question_id"] in sql_candidate_lists
     for sample in test_data:
         assert sample["question_id"] in sql_candidate_lists
-    # check for each list[Candidate], question_ids and samples match
-    for question_id, candidates in sql_candidate_lists.items():
-        for candidate in candidates:
-            assert candidate.question_id == question_id
-        if len(candidates) > 1:
-            for candidate in candidates[1:]:
-                assert candidate.sample == candidates[0].sample
     # check candidate list all have same lengths
     for question_id, candidates in sql_candidate_lists.items():
         assert len(candidates) == len(candidate_configs)
-    # save all
-    for question_id, candidates in sql_candidate_lists.items():
-        output = CandidateList(
-            question_id=question_id,
-            candidate_configs=candidate_configs,
-            candidates=candidates,
-        )
-        with open(os.path.join(sql_generation_output_dir, f"candidates_qid-{question_id:04d}.json"), "w") as f:
-            f.write(output.model_dump_json(indent=2))
     logger.info("Sql generation complete")
 
     #############################
@@ -1012,7 +1044,8 @@ def main():
             if candidate.rewrite_checked:
                 already_rewritten += 1
                 continue
-            flattened_sqls.append((question_id, config_idx, candidate))
+            candidate_copy = copy.deepcopy(candidate)
+            flattened_sqls.append((question_id, config_idx, candidate_copy))
     logger.info(f"Skipping {already_rewritten} already rewritten candidates")
     logger.info(f"Running rewrite check for {len(flattened_sqls)} candidates")
 
@@ -1021,13 +1054,13 @@ def main():
         question_id, config_idx, candidate = params
         assert type(candidate) == Candidate
         try:
-            output: Candidate = run_candidate_rewrite_check(
+            rewritten_candidate: Candidate = run_candidate_rewrite_check(
                 candidate=candidate,
                 dataset=dataset,
                 generator=gcp_generator_candidate,
                 schema_manager=schema_manager,
             )
-            return question_id, config_idx, output.candidate_sql, output
+            return question_id, config_idx, rewritten_candidate.candidate_sql, rewritten_candidate
         except Exception as e:
             logger.error(f"Error in rewrite check for idx {question_id}, sql_idx {config_idx}: {str(e)}")
             logger.error(f"output: {output}")
@@ -1041,6 +1074,9 @@ def main():
                 tuple_result: tuple[int, int, str, Candidate] = future.result()
                 question_id, config_idx, sql, candidate = tuple_result
                 # update candidate in sql_candidate_lists
+                assert question_id == candidate.question_id
+                old_cand = sql_candidate_lists[question_id][config_idx]
+                assert old_cand.question_id == candidate.question_id
                 sql_candidate_lists[question_id][config_idx] = candidate
 
     # assert all have been rewritten
@@ -1056,7 +1092,7 @@ def main():
             candidates=candidate_list,
         )
         with open(os.path.join(sql_generation_output_dir, f"candidates_qid-{question_id:04d}.json"), "w") as f:
-            f.write(output.model_dump_json(indent=2))
+            f.write(bundle.model_dump_json(indent=2))
 
     logger.info("Rewrite check complete")
 
@@ -1118,7 +1154,65 @@ def main():
     with open(os.path.join(args.output_path, "predict.json"), "w") as f:
         json.dump(predictions, f, indent=2)
 
-    # todo: calculate final token counts
+    # calculate final token counts
+    total_token_counts = TotalTokenUsage(label="total")
+
+    # for schema linking, calculate by model name
+    schema_linking_token_counts: dict[str, TotalTokenUsage] = {}
+    for question_id, model_schema_linking_dict in schema_linking_results.items():
+        for model_name, schema_format_dict in model_schema_linking_dict.items():
+            for schema_format, schema_linking_info in schema_format_dict.items():
+                assert type(schema_linking_info) == SchemaLinkingInfo
+                token_usage = schema_linking_info.generator_output.tokens
+                schema_linking_token_counts[model_name] = (
+                    schema_linking_token_counts.get(model_name, TotalTokenUsage(label=f"schema-linking_{model_name}"))
+                    + token_usage
+                )
+                total_token_counts += token_usage
+    # for sql_generation, get the generation and rewrite token counts separately
+    sql_generation_token_counts = TotalTokenUsage(label="sql_generation")
+    sql_generation_rewrite_token_counts = TotalTokenUsage(label="sql_generation_rewrite")
+    for question_id, candidate_list in sql_candidate_lists.items():
+        for candidate in candidate_list:
+            assert type(candidate) == Candidate
+            sql_generation_token_counts += candidate.generator_output.tokens
+            total_token_counts += candidate.generator_output.tokens
+            for rewrite_info in candidate.rewrite_info:
+                if rewrite_info.generator_output is not None and rewrite_info.generator_output.tokens is not None:
+                    sql_generation_rewrite_token_counts += rewrite_info.generator_output.tokens
+                    total_token_counts += rewrite_info.generator_output.tokens
+
+    # for candidate selection, get the selection token counts
+    candidate_selection_token_counts = TotalTokenUsage(label="candidate_selection")
+    for question_id, candidate_selection in candidate_selections.items():
+        if type(candidate_selection) == CandidateSelection:
+            for output in candidate_selection.generator_outputs:
+                if hasattr(output, "tokens") and output.tokens is not None:
+                    candidate_selection_token_counts += output.tokens
+                    total_token_counts += output.tokens
+
+    embedding_calls = 0
+    embedding_chars = 0
+    for question_id, embedding_result in embedding_results.items():
+        if type(embedding_result) == EmbeddingResult:
+            embedding_calls += 1
+            embedding_chars += embedding_result.input_characters
+    embedding_result = {
+        "label": "embedding",
+        "calls": embedding_calls,
+        "characters": embedding_chars,
+    }
+
+    token_report = TokenReport(
+        total=total_token_counts,
+        schema_linking=schema_linking_token_counts,
+        sql_generation=sql_generation_token_counts,
+        sql_generation_rewrite=sql_generation_rewrite_token_counts,
+        candidate_selection=candidate_selection_token_counts,
+        embedding=embedding_result,
+    )
+    with open(os.path.join(args.output_path, "token_counts.json"), "w") as f:
+        f.write(token_report.model_dump_json(indent=2))
 
 
 if __name__ == "__main__":
