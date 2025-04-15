@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple
 from text2sql.data.query_parser import get_table_mapping
 from text2sql.data.schema_filtering import parse_m_schema
 from text2sql.data.schema_manager import SchemaManager
-from text2sql.engine.generation.generators import BaseGenerator
+from text2sql.engine.generation.generators import BaseGenerator, GenerationResult
 from text2sql.evaluation.metrics import execution_match
 
 # System and user prompts for query comparison
@@ -142,7 +142,7 @@ def process_prediction_pair(
     nl_en_query: str,
     evidence: str,
     generator: BaseGenerator,
-) -> Optional[Tuple[int, int]]:
+) -> Optional[Tuple[int, int, GenerationResult | None]]:
     """
     Process a pair of predictions to determine which one to vote for.
 
@@ -163,16 +163,16 @@ def process_prediction_pair(
         return None
 
     if execution_match(predictions[idx]["results"], predictions[inner_idx]["results"]):
-        return (idx, 1)
+        return (idx, 1, None)
 
     # Get table mappings for both predictions
     try:
         outer_table_mapping = get_table_mapping(schema_manager.get_schema_mapping(db_id), predictions[idx]["sql"])[
             "table_map"
         ]
-        inner_table_mapping = get_table_mapping(schema_manager.get_schema_mapping(db_id), predictions[inner_idx]["sql"])[
-            "table_map"
-        ]
+        inner_table_mapping = get_table_mapping(
+            schema_manager.get_schema_mapping(db_id), predictions[inner_idx]["sql"]
+        )["table_map"]
     except Exception:
         # case where parsing fails e.g. LLM output not SQL
         return None
@@ -199,13 +199,13 @@ def process_prediction_pair(
     messages[-1]["content"] += "\nReturn only the letter A or B, do not output any other text"
 
     # Use GCPGenerator to get the vote
-    result = generator.generate(messages, temperature=0)
-    vote = result.strip()
+    result_object: GenerationResult = generator.generate(messages, temperature=0)
+    vote = result_object.text.strip()
 
     if vote.lower() == "a":
-        return (idx, 1)
+        return (idx, 1, result_object)
     if vote.lower() == "b":
-        return (inner_idx, 1)
+        return (inner_idx, 1, result_object)
     print("Invalid vote:", vote)
     return None
 
@@ -217,7 +217,7 @@ def chase_voting(
     question: str,
     evidence: str,
     generator: BaseGenerator,
-) -> Dict[int, int]:
+) -> Tuple[Dict[int, int], list[GenerationResult]]:
     """
     Perform chase voting on predictions using parallel processing.
 
@@ -253,12 +253,15 @@ def chase_voting(
         )
 
     # Aggregate votes
+    generation_results: list[GenerationResult] = []
     for result in results:
         if result is not None:
-            pred_idx, vote = result
+            pred_idx, vote, gen_result = result
             prediction_votes[pred_idx] = prediction_votes.get(pred_idx, 0) + vote
+            if gen_result is not None:
+                generation_results.append(gen_result)
 
-    return prediction_votes
+    return prediction_votes, generation_results
 
 
 def select_best_candidate(
@@ -269,7 +272,7 @@ def select_best_candidate(
     question: str | None = None,
     evidence: str | None = None,
     generator: BaseGenerator | None = None,
-) -> str:
+) -> Tuple[str, list[GenerationResult]]:
     """
     Select the best prediction based on voting.
 
@@ -313,15 +316,15 @@ def select_best_candidate(
 
     if not predicted_valids:
         if len(predictions) > 0:
-            return predictions[0]["sql"]
+            return predictions[0]["sql"], []
         else:
-            return "SELECT 1"
+            return "SELECT 1", []
 
     prediction_votes = get_votes(predicted_valids)
     max_vote_sql, values = max(prediction_votes.items(), key=lambda x: x[1]["vote_count"])
 
     if not chase:
-        return max_vote_sql
+        return max_vote_sql, []
 
     max_vote = values["vote_count"]
 
@@ -333,15 +336,22 @@ def select_best_candidate(
     )
 
     if should_chase:
-        chase_votes = chase_voting(predicted_valids, schema_manager, db_id, question, evidence, generator)
+        chase_votes, chase_generations = chase_voting(
+            predicted_valids,
+            schema_manager,
+            db_id,
+            question,
+            evidence,
+            generator,
+        )
 
         # Handle empty chase_votes
         if not chase_votes:
-            return max_vote_sql
+            return max_vote_sql, chase_generations
 
         chase_idx, _chase_max_vote = max(chase_votes.items(), key=lambda x: x[1])
         chase_sql = predicted_valids[chase_idx]["sql"]
 
-        return chase_sql
+        return chase_sql, chase_generations
     else:
-        return max_vote_sql
+        return max_vote_sql, []

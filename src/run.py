@@ -67,7 +67,8 @@ class Candidate(BaseModel):
     schema_filtering: Literal["none", "table", "column"]
     messages: list[dict]
     generator_output: GenerationResult
-    candidate_sql: str
+    original_sql: str  # first generation parsed result
+    candidate_sql: str  # final candidate sql after rewrite
     rewrite_checked: bool = False
     rewrite_info: list[RewriteInfo] = []
 
@@ -81,6 +82,7 @@ class CandidateList(BaseModel):
 class CandidateSelection(BaseModel):
     question_id: int
     db_id: str  # for formatting output
+    generator_outputs: list[GenerationResult] = []
     candidate_config: dict
     selected_idx: int
     selected_sql: str
@@ -335,6 +337,7 @@ def run_sql_generation(
         schema_filtering=schema_filtering,
         messages=messages,
         generator_output=prediction_output,
+        original_sql=sql_prediction,
         candidate_sql=sql_prediction,
     )
 
@@ -498,11 +501,10 @@ def run_candidate_rewrite_check(
 
         try:
             # Attempt rewrite
-            rewritten_output: RewriteInfo = run_sql_rewrite(
-                generator, candidate, current_sql, filtered_schema_description
-            )
-
-            current_sql = rewritten_output.rewritten_sql
+            rewritten_output: RewriteInfo = run_sql_rewrite(generator, candidate, filtered_schema_description)
+            # add rewrite iteration info to candidate and update current sql
+            candidate.candidate_sql = rewritten_output.rewritten_sql
+            candidate.rewrite_info.append(rewritten_output)
 
         except Exception as e:
             logger.error(f"Error in run_sql_rewrite attempt {attempt + 1}: {str(e)}")
@@ -510,6 +512,7 @@ def run_candidate_rewrite_check(
 
         attempt += 1
 
+    candidate.candidate_sql = current_sql
     candidate.rewrite_info.append(rewritten_output)
     candidate.rewrite_checked = True  # should this be true even if max tries exceeded?
     return candidate
@@ -552,7 +555,7 @@ def run_candidate_selection(
             }
         )
     # run selection
-    best_sql = select_best_candidate(
+    best_sql, chase_generations = select_best_candidate(
         predictions=sample_dicts,
         schema_manager=schema_manager,
         db_id=database,
@@ -568,6 +571,7 @@ def run_candidate_selection(
     return CandidateSelection(
         question_id=question_id,
         db_id=database,
+        generator_outputs=chase_generations,
         candidate_config=candidate_configs[sql_index],
         selected_idx=sql_index,
         selected_sql=best_sql,
