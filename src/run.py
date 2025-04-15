@@ -503,7 +503,6 @@ def run_candidate_rewrite_check(
             )
 
             current_sql = rewritten_output.rewritten_sql
-            logger.debug(f"Rewrite attempt {attempt + 1}, SQL: {current_sql}")
 
         except Exception as e:
             logger.error(f"Error in run_sql_rewrite attempt {attempt + 1}: {str(e)}")
@@ -804,10 +803,6 @@ def main():
                     if model_name not in schema_linking_results[question_id]:
                         schema_linking_results[question_id][model_name] = {}
                     schema_linking_results[question_id][model_name][schema_format] = schema_linking_output
-                    logger.debug(
-                        f"{question_id} model '{model_name}' schema '{schema_format}' from {os.path.basename(file)}"
-                    )
-                    logger.debug(f"check model keys for {question_id}: {schema_linking_results[question_id].keys()}")
     logger.info(f"Loaded {len(schema_linking_results)} cached schema linking results")
     # check how many samples not in cache based on question_id
     missing_question_ids = set(
@@ -843,18 +838,6 @@ def main():
                 if model_name not in schema_linking_results[question_id]:
                     schema_linking_results[question_id][model_name] = {}
                 schema_linking_results[question_id][model_name][schema_format] = output
-
-    # check all question ids are in schema_linking_outputs
-    schema_keys = sorted(schema_linking_results.keys())
-    logger.debug(f"Schema linking results keys: {schema_keys}")
-    for key in schema_keys:
-        logger.debug(f"Schema linking results for question {key}: {schema_linking_results[key].keys()}")
-    for key in schema_keys:
-        mdl_keys = sorted(schema_linking_results[key].keys())
-        for mdl_key in mdl_keys:
-            logger.debug(
-                f"Schema linking results for question {key} model {mdl_key}: {schema_linking_results[key][mdl_key].keys()}"
-            )
 
     for sample in test_data:
         assert sample["question_id"] in schema_linking_results
@@ -983,7 +966,9 @@ def main():
     for question_id, candidates in sql_candidate_lists.items():
         for candidate in candidates:
             assert candidate.question_id == question_id
-            assert candidate.sample == sample
+        if len(candidates) > 1:
+            for candidate in candidates[1:]:
+                assert candidate.sample == candidates[0].sample
     # check candidate list all have same lengths
     for question_id, candidates in sql_candidate_lists.items():
         assert len(candidates) == len(candidate_configs)
