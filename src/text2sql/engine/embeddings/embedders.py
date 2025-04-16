@@ -10,7 +10,6 @@ from pydantic import BaseModel
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from text2sql.engine.clients import get_azure_client, get_bedrock_client
-from text2sql.utils import CharacterCounter
 
 
 class EmbeddingResult(BaseModel):

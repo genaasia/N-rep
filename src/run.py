@@ -32,7 +32,7 @@ from text2sql.engine.prompts.formatters import RewritePromptFormatter
 from text2sql.engine.retrieval import LocalRetriever
 from text2sql.engine.generation.postprocessing import extract_first_code_block
 from text2sql.utils.postprocess import get_table_names_from_query
-from text2sql.utils import parse_json_from_prediction, replace_entities_with_tokens
+from text2sql.utils import parse_json_from_prediction
 
 from text2sql.pipeline.selection import select_best_candidate
 
@@ -773,9 +773,7 @@ def main():
             raise FileNotFoundError("copy of experiment_candidate_configs.yaml not found in output directory")
         with open(os.path.join(args.output_path, "experiment_candidate_configs.yaml"), "r") as f:
             candidate_configs_copy: list[dict] = yaml.safe_load(f)
-            if "configs" not in candidate_configs_copy:
-                raise ValueError("candidate_configs_copy must contain a 'configs' key")
-            if candidate_configs != candidate_configs_copy["configs"]:
+            if candidate_configs != candidate_configs_copy:
                 raise ValueError("candidate_configs mismatch! must have same configs for restoring data")
 
     # load test.json
@@ -1121,7 +1119,7 @@ def main():
 
     candidate_selections: dict[int, CandidateSelection] = {}
     for file in os.listdir(candidate_selection_output_dir):
-        if os.path.basename(file).startswith("selection_") and file.endswith(".json"):
+        if os.path.basename(file).startswith("selection_qid-") and file.endswith(".json"):
             question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
             if question_id in test_question_ids:
                 with open(os.path.join(candidate_selection_output_dir, file), "r") as f:
@@ -1130,7 +1128,7 @@ def main():
     missing_samples = [s for s in test_data if s["question_id"] not in candidate_selections]
     logger.info(f"Running candidate selection for {len(missing_samples)} samples")
     # run candidate selection for each sample
-    for sample in tqdm.tqdm(test_data):
+    for sample in tqdm.tqdm(missing_samples):
         question_id = sample["question_id"]
         candidate_list: list[Candidate] = sql_candidate_lists[question_id]
         candidate_selection_result: CandidateSelection = run_candidate_selection(
@@ -1149,7 +1147,7 @@ def main():
 
     # save all
     for question_id, candidate_selection in candidate_selections.items():
-        with open(os.path.join(candidate_selection_output_dir, f"{question_id:04d}.json"), "w") as f:
+        with open(os.path.join(candidate_selection_output_dir, f"selection_qid-{question_id:04d}.json"), "w") as f:
             f.write(candidate_selection.model_dump_json(indent=2))
 
     logger.info("Candidate selection complete")
@@ -1170,6 +1168,7 @@ def main():
         raise ValueError(f"predictions length ({len(predictions)}) does not match test data length ({len(test_data)})")
     with open(os.path.join(args.output_path, "predict.json"), "w") as f:
         json.dump(predictions, f, indent=2)
+    logger.info(f"predictions saved to {os.path.join(args.output_path, 'predict.json')}")
 
     # calculate final token counts
     total_token_counts = TotalTokenUsage(label="total")
@@ -1220,8 +1219,10 @@ def main():
     embedding_result = {
         "label": "embedding",
         "calls": embedding_calls,
-        "characters": embedding_chars,
-        "inf_time_ms": inf_time_ms,
+        "avg_characters": embedding_chars / embedding_calls,
+        "ttl_characters": embedding_chars,
+        "avg_inf_time_ms": inf_time_ms / embedding_calls,
+        "ttl_inf_time_ms": inf_time_ms,
     }
 
     token_report = TokenReport(
@@ -1234,6 +1235,9 @@ def main():
     )
     with open(os.path.join(args.output_path, "token_counts.json"), "w") as f:
         f.write(token_report.model_dump_json(indent=2))
+    logger.info(f"token counts saved to {os.path.join(args.output_path, 'token_counts.json')}")
+
+    logger.info(f"total token usage (including cached results):\n{token_report.model_dump_json(indent=2)}")
 
 
 if __name__ == "__main__":
