@@ -1,7 +1,7 @@
 top_k: 3
 
 configs:
-  - schema_format: sql
+  - schema_format: sql_create
     schema_filtering: column
     generator: azure
     model: gpt-4o-bird
