@@ -3,21 +3,18 @@ import copy
 import json
 import os
 import sys
-import warnings
 
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.pool import ThreadPool
 from typing import Annotated, Literal
 
-import dill as pickle
 import numpy as np
 import tqdm
 import yaml
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import AfterValidator, BaseModel, field_validator
+from pydantic import AfterValidator, BaseModel
 
 from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 
@@ -40,12 +37,13 @@ from text2sql.pipeline.selection import select_best_candidate
 def verify_schema_format(schema_format: str):
     if schema_format not in SCHEMA_FORMATS:
         raise ValueError(f"Invalid schema format: {schema_format}")
+    return schema_format
 
 
 class SchemaLinkingInfo(BaseModel):
     question_id: int
     model_name: str
-    schema_format: Annotated[str, verify_schema_format]
+    schema_format: Annotated[str, AfterValidator(verify_schema_format)]
     messages: list[dict]
     generator_output: GenerationResult
     prediction: str
@@ -60,7 +58,6 @@ class RewriteInfo(BaseModel):
     question_id: int
     original_sql: str
     rewritten_sql: str
-    is_processed: bool  # whether the candidate went through the rewrite check, whether it was rewritten or not
     is_rewritten: bool  # whether the candidate was rewritten successfully (even if rewritten sql is same)
     messages: list[dict]
     generator_output: GenerationResult | None
@@ -70,7 +67,7 @@ class Candidate(BaseModel):
     question_id: int
     config_index: int
     sample: dict
-    schema_format: Annotated[str, verify_schema_format]
+    schema_format: Annotated[str, AfterValidator(verify_schema_format)]
     schema_filtering: Literal["none", "table", "column"]
     messages: list[dict]
     generator_output: GenerationResult
@@ -136,7 +133,7 @@ def prepare_dataset_information(
     """
     logger.info(f"Loading dataset from {test_database_path}...")
     dataset = SqliteDataset(test_database_path)
-    logger.info(f"Creating schema manager and generating schema descriptions, this may takes some time...")
+    logger.info("Creating schema manager and generating schema descriptions, this may takes some time...")
     schema_manager = SchemaManager(dataset, table_descriptions_path=table_descriptions_path)
     return dataset, schema_manager
 
@@ -457,7 +454,6 @@ def run_sql_rewrite(
         question_id=candidate.question_id,
         original_sql=original_sql,
         rewritten_sql=sql_prediction,
-        is_processed=True,
         is_rewritten=is_rewritten,
         messages=messages,
         generator_output=rewrite_output,
@@ -501,36 +497,19 @@ def run_candidate_rewrite_check(
     max_retries = 3
     attempt = 0
 
-    predicted_sql: str = candidate.candidate_sql
-    current_sql = predicted_sql
-
-    # default output
-    rewritten_output = RewriteInfo(
-        question_id=candidate.question_id,
-        original_sql=predicted_sql,
-        rewritten_sql=predicted_sql,
-        is_processed=False,
-        is_rewritten=False,
-        messages=[],
-        generator_output=None,
-    )
-
     while attempt < max_retries:
         # Check current SQL execution
-        execution_result_dict: dict = dataset.validate_query(database, current_sql)
+        execution_result_dict: dict = dataset.validate_query(database, candidate.candidate_sql)
         execution_results: list[dict] = execution_result_dict.get("execution_result", [])
 
         # If no rewrite needed, return current SQL
         if not check_need_rewrite(execution_results):
-            rewritten_output.is_processed = True
-            rewritten_output.is_rewritten = False
-            candidate.rewrite_info.append(rewritten_output)
             candidate.rewrite_checked = True
             return candidate
 
         # Get filtered schema for rewrite
         filtered_schema_description = get_filtered_schema_description_for_rewrite(
-            database, schema_manager.get_schema_mapping(database), current_sql
+            database, schema_manager.get_schema_mapping(database), candidate.candidate_sql
         )
 
         try:
@@ -546,8 +525,6 @@ def run_candidate_rewrite_check(
 
         attempt += 1
 
-    candidate.candidate_sql = current_sql
-    candidate.rewrite_info.append(rewritten_output)
     candidate.rewrite_checked = True  # should this be true even if max tries exceeded?
     return candidate
 
@@ -575,7 +552,7 @@ def run_candidate_selection(
             selected_sql=candidates[0].candidate_sql,
         )
     sample_dicts: list[dict] = []
-    for config_idx, candidate in enumerate(candidates):
+    for candidate in candidates:
         sql_query = candidate.candidate_sql
         execution_result_dict: dict = dataset.validate_query(database, sql_query)
         execution_results: list[dict] = execution_result_dict.get("execution_result", [])
@@ -746,6 +723,8 @@ def main():
         if "top_k" in candidate_config_data:
             top_k = candidate_config_data["top_k"]
         candidate_configs: list[dict] = candidate_config_data["configs"]
+    for config_idx, config in enumerate(candidate_configs):
+        logger.debug(f"Candidate config {config_idx}: {json.dumps(config)}")
 
     # verify candidate config keys:
     for config in candidate_configs:
