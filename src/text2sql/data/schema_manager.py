@@ -5,14 +5,14 @@ from typing import Dict, List, Optional
 
 import tqdm
 
-from text2sql.data.datasets import BaseDataset
+from text2sql.data.datasets import BaseDataset, SCHEMA_FORMATS
 from text2sql.data.schema_filtering import (
     parse_mac_schema,
     parse_m_schema,
     parse_sql_create,
     parse_basic_format,
     parse_datagrip_format,
-    parse_sql_create_from_source
+    parse_sql_create_from_source,
 )
 
 
@@ -40,6 +40,10 @@ class SchemaManager:
                                    If provided, enables full mac-schema mode with descriptions.
                                    If None, uses mac-schema-basic mode without descriptions.
         """
+        if supported_modes:
+            for mode in supported_modes:
+                if mode not in SCHEMA_FORMATS:
+                    raise ValueError(f"Mode '{mode}' is not supported by the dataset")
         self.dataset = dataset
         self.supported_modes = supported_modes or dataset.supported_modes
 
@@ -147,12 +151,13 @@ class SchemaManager:
             return parse_mac_schema(full_schema, filter_dict)
         elif mode == "m_schema":
             return parse_m_schema(full_schema, filter_dict)
-        elif mode == "sql":
+        elif mode == "sql_create":
             # return parse_sql_create(full_schema, filter_dict)
             try:
                 return parse_sql_create_from_source(self.dataset, database_name, filter_dict)
             except Exception as e:
                 from loguru import logger
+
                 logger.warning(f"Filter Dict: {filter_dict}")
                 logger.warning(f"Error parsing sql create from source: {type(e).__name__}: {str(e)}")
                 return full_schema

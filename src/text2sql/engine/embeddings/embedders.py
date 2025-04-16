@@ -6,10 +6,19 @@ import tqdm
 
 from loguru import logger
 from openai import AzureOpenAI
+from pydantic import BaseModel
 from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from text2sql.engine.clients import get_azure_client, get_bedrock_client
-from text2sql.utils import CharacterCounter
+
+
+class EmbeddingResult(BaseModel):
+    """result of a single embedding call"""
+
+    texts: list[str]
+    embeddings: list[list[float]]
+    input_characters: int
+    inf_time_ms: int
 
 
 class BaseEmbedder(ABC):
@@ -18,46 +27,61 @@ class BaseEmbedder(ABC):
         batch_size: int = 8,
         max_chars: int = 1024,
         sleep_ms: int = 0,
-        counter: CharacterCounter | None = None,
     ):
         self.batch_size = batch_size
         self.max_chars = max_chars
         self.sleep_ms: int = sleep_ms
-        self.counter = counter
 
     @abstractmethod
     def _embed_batch(self, batch_samples: list[str]) -> list[list[float]]:
         """batch embedding function for specific client"""
         pass
 
-    def embed_list(self, samples: list[str], verbose: bool = False) -> list[list[float]]:
+    def embed_list(self, samples: list[str], verbose: bool = False) -> EmbeddingResult:
         """embed a list of texts, with optional progress bar"""
+        character_count: int = 0
+        inf_time_ms: int = 0
+        input_texts: list[str] = []
         embeddings: list[list[float]] = []
         iter_list = range(0, len(samples), self.batch_size)
         if verbose:
             iter_list = tqdm.tqdm(iter_list)
         for i in iter_list:
             batch_inputs = [text[: self.max_chars] for text in samples[i : i + self.batch_size]]
+            input_texts.extend(batch_inputs)
+            character_count += sum(len(text) for text in batch_inputs)
+            start_time = time.time()
             batch_embeddings = self._embed_batch(batch_inputs)
+            end_time = time.time()
             embeddings.extend(batch_embeddings)
+            inf_time_ms += int((end_time - start_time) * 1000)
             if self.sleep_ms:
                 time.sleep(self.sleep_ms / 1000)
-        return embeddings
+        return EmbeddingResult(
+            texts=input_texts,
+            embeddings=embeddings,
+            input_characters=character_count,
+            inf_time_ms=inf_time_ms,
+        )
 
-    def embed_text(self, text: str) -> list[float]:
+    def embed_text(self, text: str) -> EmbeddingResult:
         """embed a single text"""
-        return self._embed_batch([text])[0]
+        texts = [text[: self.max_chars]]
+        start_time = time.time()
+        embeddings = self._embed_batch(texts)
+        end_time = time.time()
+        return EmbeddingResult(
+            texts=texts,
+            embeddings=embeddings,
+            input_characters=len(text[: self.max_chars]),
+            inf_time_ms=int((end_time - start_time) * 1000),
+        )
 
-    def embed(self, data: str | list[str], verbose: bool = False) -> list[float] | list[list[float]]:
+    def embed(self, data: str | list[str], verbose: bool = False) -> EmbeddingResult:
         """lazy function to embed either a single text or a list of texts"""
         if isinstance(data, str):
-            if self.counter:
-                self.counter.add_character_counts(len(data))
             return self.embed_text(data)
         else:
-            if self.counter:
-                for text in data:
-                    self.counter.add_character_counts(len(text))
             return self.embed_list(data, verbose=verbose)
 
 
@@ -72,7 +96,6 @@ class AzureEmbedder(BaseEmbedder):
         batch_size: int = 8,
         max_chars: int = 1024,
         sleep_ms: int = 0,
-        counter: CharacterCounter | None = None,
         **kwargs,
     ):
         """embed texts using Azure OpenAI API
@@ -87,7 +110,7 @@ class AzureEmbedder(BaseEmbedder):
             sleep_ms (int, optional): sleep time in ms. Defaults to 0.
             kwargs: additional azure client specific arguments
         """
-        super().__init__(batch_size=batch_size, max_chars=max_chars, sleep_ms=sleep_ms, counter=counter)
+        super().__init__(batch_size=batch_size, max_chars=max_chars, sleep_ms=sleep_ms)
         self.api_key = api_key
         self.api_version = api_version
         self.azure_endpoint = azure_endpoint
@@ -121,7 +144,6 @@ class BedrockCohereEmbedder(BaseEmbedder):
         batch_size: int = 8,
         max_chars: int = 1024,
         sleep_ms: int = 0,
-        counter: CharacterCounter | None = None,
     ):
         """embed texts using Cohere embeddings on Amazon Bedrock API
 
@@ -135,7 +157,7 @@ class BedrockCohereEmbedder(BaseEmbedder):
             max_chars (int, optional): max chars. Defaults to 1024.
             sleep_ms (int, optional): sleep time in ms. Defaults to 0.
         """
-        super().__init__(batch_size=batch_size, max_chars=max_chars, sleep_ms=sleep_ms, counter=counter)
+        super().__init__(batch_size=batch_size, max_chars=max_chars, sleep_ms=sleep_ms)
         self.region_name = region_name
         self.service_name = service_name
         self.model = model

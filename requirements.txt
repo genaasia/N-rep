@@ -5,6 +5,7 @@ pyyaml
 python-dotenv
 tenacity
 func_timeout
+pydantic>=2.11.3
 
 # AI/ML dependencies
 openai

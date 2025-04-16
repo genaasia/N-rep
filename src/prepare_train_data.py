@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from text2sql.data import SchemaManager, SqliteDataset
 from text2sql.data.query_parser import get_table_mapping
-from text2sql.engine.embeddings import BedrockCohereEmbedder
+from text2sql.engine.embeddings import BedrockCohereEmbedder, EmbeddingResult
 
 
 @dataclass
@@ -47,9 +47,7 @@ def parse_arguments():
     Returns:
         Parsed arguments
     """
-    parser = argparse.ArgumentParser(
-        description="Process SQL queries and prepare training data."
-    )
+    parser = argparse.ArgumentParser(description="Process SQL queries and prepare training data.")
 
     parser.add_argument(
         "--train-databases-path",
@@ -79,9 +77,7 @@ def parse_arguments():
         help="Path to save the output JSON file",
     )
 
-    parser.add_argument(
-        "--subset", type=int, default=0, help="Number of samples to process (0 for all)"
-    )
+    parser.add_argument("--subset", type=int, default=0, help="Number of samples to process (0 for all)")
 
     parser.add_argument(
         "--max-processes",
@@ -177,9 +173,7 @@ def replace_entities_with_tokens(question, named_entities):
     for entity_type, entities in named_entities.items():
         for entity in entities:
             # Use <TYPE> format for entity replacement
-            skeleton_question = skeleton_question.replace(
-                entity, f"<{entity_type.lower()}>"
-            )
+            skeleton_question = skeleton_question.replace(entity, f"<{entity_type.lower()}>")
 
     return skeleton_question
 
@@ -216,9 +210,7 @@ def process_single_query(
 
         # Get filtered schema
         t2_filter = time.time()
-        filtered_schema_dict = get_filtered_schema_txt(
-            table_mapping["table_map"], item["db_id"], schema_manager
-        )
+        filtered_schema_dict = get_filtered_schema_txt(table_mapping["table_map"], item["db_id"], schema_manager)
         timing.schema_filtering = time.time() - t2_filter
 
         item.update(filtered_schema_dict)
@@ -229,17 +221,13 @@ def process_single_query(
         # If query uses more than one table, validate and execute it
         if len(table_mapping["tables"]) > 1:
             t3_validation = time.time()
-            result = sql_dataset.validate_query(
-                item["db_id"], item["SQL"], timeout_secs=5
-            )
+            result = sql_dataset.validate_query(item["db_id"], item["SQL"], timeout_secs=5)
             timing.query_validation = time.time() - t3_validation
 
             if result["validated"] or result["message"].startswith("query timed out"):
                 t4_ner = time.time()
                 entities = extract_named_entities(item["question"])
-                item["question_masked"] = replace_entities_with_tokens(
-                    item["question"], entities
-                )
+                item["question_masked"] = replace_entities_with_tokens(item["question"], entities)
                 timing.ner_extraction = time.time() - t4_ner
 
                 timing.total = time.time() - t0
@@ -261,9 +249,7 @@ def process_single_query(
         return ProcessingResult(item, False, True, False)
 
 
-def save_results(
-    valid_multi_table_queries: List[Dict[str, Any]], output_path: str
-) -> None:
+def save_results(valid_multi_table_queries: List[Dict[str, Any]], output_path: str) -> None:
     """
     Save the processed results to files.
 
@@ -329,14 +315,10 @@ def process_queries(args) -> None:
     """Main function to process and filter queries using ProcessPoolExecutor."""
     # Initialize and load data
     t_start = time.time()
-    sql_dataset, train_data = load_data(
-        args.train_databases_path, args.train_data_path, args.subset
-    )
+    sql_dataset, train_data = load_data(args.train_databases_path, args.train_data_path, args.subset)
 
     print("Initializing schema manager")
-    schema_manager = SchemaManager(
-        sql_dataset, table_descriptions_path=args.tables_json_path
-    )
+    schema_manager = SchemaManager(sql_dataset, table_descriptions_path=args.tables_json_path)
     print("Schema manager initialized")
 
     init_time = time.time() - t_start
@@ -348,9 +330,7 @@ def process_queries(args) -> None:
 
     # Divide data into chunks for each process
     chunk_size = (len(train_data) + num_processes - 1) // num_processes
-    chunks = [
-        train_data[i : i + chunk_size] for i in range(0, len(train_data), chunk_size)
-    ]
+    chunks = [train_data[i : i + chunk_size] for i in range(0, len(train_data), chunk_size)]
 
     # Create a progress bar
     total_items = len(train_data)
@@ -361,10 +341,7 @@ def process_queries(args) -> None:
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
         # Submit all tasks
         future_to_chunk = {
-            executor.submit(process_chunk, chunk, sql_dataset, schema_manager): len(
-                chunk
-            )
-            for chunk in chunks
+            executor.submit(process_chunk, chunk, sql_dataset, schema_manager): len(chunk) for chunk in chunks
         }
 
         # As each task completes, update the progress bar
@@ -411,9 +388,7 @@ def process_queries(args) -> None:
 
     # Save results and print statistics
     save_results(valid_multi_table_queries, args.output_path)
-    print_statistics(
-        train_data, valid_multi_table_queries, single_table_count, invalid_query_count
-    )
+    print_statistics(train_data, valid_multi_table_queries, single_table_count, invalid_query_count)
 
     # Get the embeddings
     load_dotenv()
@@ -427,7 +402,9 @@ def process_queries(args) -> None:
     embedding_path = args.output_path.replace(".json", "_embeddings.npy")
     print(f"generating train embeddings and saving to '{embedding_path}'")
     masked_questions = [item["question_masked"] for item in valid_multi_table_queries]
-    train_embeddings = embedder.embed(masked_questions, verbose=True)
+    train_embedding_response: EmbeddingResult = embedder.embed(masked_questions, verbose=True)
+    train_embeddings = train_embedding_response.embedding
+    assert len(train_embeddings) == len(masked_questions)
     np.save(embedding_path, train_embeddings)
 
 
