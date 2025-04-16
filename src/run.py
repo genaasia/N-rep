@@ -100,15 +100,21 @@ class CandidateSelection(BaseModel):
     selected_sql: str
 
 
+def update_moving_average(current_avg, n, new_sample):
+    return (current_avg * n + new_sample) / (n + 1)
+
+
 class TotalTokenUsage(BaseModel):
     label: str = ""
     calls: int = 0
-    tokens: TokenUsage = TokenUsage(prompt_tokens=0, output_tokens=0, total_tokens=0)
+    avg_inf_time_ms: float = 0
+    tokens: TokenUsage = TokenUsage(prompt_tokens=0, output_tokens=0, total_tokens=0, inf_time_ms=0)
 
     # allow adding to TokenUsage. add to internal tokens TokenUsage and increment calls by one
     def __add__(self, other: TokenUsage) -> "TotalTokenUsage":
         self.tokens += other
         self.calls += 1
+        self.avg_inf_time_ms = update_moving_average(self.avg_inf_time_ms, self.calls, other.inf_time_ms)
         return self
 
 
@@ -1204,14 +1210,18 @@ def main():
 
     embedding_calls = 0
     embedding_chars = 0
+    inf_time_ms = 0
     for question_id, embedding_result in embedding_results.items():
         if type(embedding_result) == EmbeddingResult:
             embedding_calls += 1
             embedding_chars += embedding_result.input_characters
+            inf_time_ms += embedding_result.inf_time_ms
+
     embedding_result = {
         "label": "embedding",
         "calls": embedding_calls,
         "characters": embedding_chars,
+        "inf_time_ms": inf_time_ms,
     }
 
     token_report = TokenReport(
