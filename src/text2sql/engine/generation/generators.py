@@ -11,7 +11,6 @@ from tenacity import retry, wait_random_exponential, stop_after_attempt
 
 from text2sql.engine.clients import get_azure_client, get_bedrock_client, get_openai_client
 from text2sql.engine.generation.converters import convert_messages_to_bedrock_format
-from text2sql.utils import TokenCounter
 
 
 def identity(x: str) -> str:
@@ -28,6 +27,7 @@ class TokenUsage(BaseModel):
     prompt_tokens: int
     output_tokens: int
     total_tokens: int
+    inf_time_ms: int
 
     # allow adding two TokenUsages
     def __add__(self, other: "TokenUsage") -> "TokenUsage":
@@ -36,6 +36,7 @@ class TokenUsage(BaseModel):
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
+            inf_time_ms=self.inf_time_ms + other.inf_time_ms,
         )
 
 
@@ -45,7 +46,6 @@ class GenerationResult(BaseModel):
     model: str
     text: str
     tokens: TokenUsage
-    inf_time_ms: int
     status: str = STATUS_OK
 
 
@@ -101,17 +101,18 @@ class AzureGenerator(BaseGenerator):
             cached_tokens = chat_completion.usage.prompt_tokens_details.cached_tokens
         else:
             cached_tokens = 0
+
+        # postprocessing
+        text = self.post_func(chat_completion.choices[0].message.content)
+        inf_time_ms = int((end_time - start_time) * 1000)
         token_usage = TokenUsage(
             cached_tokens=cached_tokens,
             prompt_tokens=chat_completion.usage.prompt_tokens,
             output_tokens=chat_completion.usage.completion_tokens,
             total_tokens=chat_completion.usage.total_tokens,
+            inf_time_ms=inf_time_ms,
         )
-
-        # postprocessing
-        text = self.post_func(chat_completion.choices[0].message.content)
-        inf_time_ms = int((end_time - start_time) * 1000)
-        return GenerationResult(model=self.model, text=text, tokens=token_usage, inf_time_ms=inf_time_ms)
+        return GenerationResult(model=self.model, text=text, tokens=token_usage)
 
 
 class BedrockGenerator(BaseGenerator):
@@ -163,13 +164,13 @@ class BedrockGenerator(BaseGenerator):
             prompt_tokens=response["usage"]["inputTokens"],
             output_tokens=response["usage"]["outputTokens"],
             total_tokens=response["usage"]["totalTokens"],
+            inf_time_ms=int((end_time - start_time) * 1000),
         )
 
         return GenerationResult(
             model=self.model,
             text=self.post_func(response["output"]["message"]["content"][-1]["text"]),
             tokens=token_usage,
-            inf_time_ms=int((end_time - start_time) * 1000),
         )
 
 
@@ -234,12 +235,12 @@ class GCPGenerator(BaseGenerator):
             prompt_tokens=prompt_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
+            inf_time_ms=int((end_time - start_time) * 1000),
         )
         return GenerationResult(
             model=self.model,
             text=self.post_func(result.text),
             tokens=token_usage,
-            inf_time_ms=int((end_time - start_time) * 1000),
             status=status,
         )
 
@@ -284,14 +285,16 @@ class OpenAIGenerator(BaseGenerator):
             cached_tokens = chat_completion.usage.prompt_tokens_details.cached_tokens
         else:
             cached_tokens = 0
+
+        # postprocessing
+        text = self.post_func(chat_completion.choices[0].message.content)
+
         token_usage = TokenUsage(
             cached_tokens=cached_tokens,
             prompt_tokens=chat_completion.usage.prompt_tokens,
             output_tokens=chat_completion.usage.completion_tokens,
             total_tokens=chat_completion.usage.total_tokens,
+            inf_time_ms=int((end_time - start_time) * 1000),
         )
 
-        # postprocessing
-        text = self.post_func(chat_completion.choices[0].message.content)
-        inf_time_ms = int((end_time - start_time) * 1000)
-        return GenerationResult(model=self.model, text=text, tokens=token_usage, inf_time_ms=inf_time_ms)
+        return GenerationResult(model=self.model, text=text, tokens=token_usage)
