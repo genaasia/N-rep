@@ -24,6 +24,19 @@ from text2sql.data.schema_to_text import (
 )
 
 
+SCHEMA_FORMATS = [
+    "basic",
+    "basic_types",
+    "basic_relations",
+    "basic_types_relations",
+    "datagrip",
+    "sql_create",
+    "m_schema",
+    "mac_schema_basic",
+    "mac_schema",
+]
+
+
 def list_supported_databases(dataset_base_path: str) -> list[str]:
     """find all sqlite databases in the dataset directory and return their names"""
     # handle nested or flat structure
@@ -35,17 +48,7 @@ def list_supported_databases(dataset_base_path: str) -> list[str]:
 
 
 class BaseDataset(ABC):
-    supported_modes = [
-        "basic",
-        "basic_types",
-        "basic_relations",
-        "basic_types_relations",
-        "datagrip",
-        "sql",
-        "m_schema",
-        "mac_schema_basic",
-        "mac_schema",
-    ]
+    supported_modes = SCHEMA_FORMATS
 
     @abstractmethod
     def get_databases(self) -> list[str]:
@@ -80,7 +83,7 @@ class BaseDataset(ABC):
             return schema_to_basic_format(database_name, schema, include_types=False, include_relations=True)
         if mode == "basic_types_relations":
             return schema_to_basic_format(database_name, schema, include_types=True, include_relations=True)
-        elif mode == "sql":
+        elif mode == "sql_create":
             return schema_to_sql_create(database_name, schema)
         elif mode == "datagrip":
             return schema_to_datagrip_format(database_name, schema)
