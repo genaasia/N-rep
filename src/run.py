@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 
 from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
+from text2sql.data.schema_manager import SCHEMA_FORMATS
 from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder, EmbeddingResult
 from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator, GenerationResult, TokenUsage
@@ -49,6 +50,11 @@ class SchemaLinkingInfo(BaseModel):
     column_description: str
     full_description: str
 
+    # verify schema_format is in SCHEMA_FORMATS
+    def verify_schema_format(self):
+        if self.schema_format not in SCHEMA_FORMATS:
+            raise ValueError(f"Invalid schema format: {self.schema_format}")
+
 
 class RewriteInfo(BaseModel):
     question_id: int
@@ -72,6 +78,11 @@ class Candidate(BaseModel):
     candidate_sql: str  # final candidate sql after rewrite
     rewrite_checked: bool = False
     rewrite_info: list[RewriteInfo] = []
+
+    # verify schema_format is in SCHEMA_FORMATS
+    def verify_schema_format(self):
+        if self.schema_format not in SCHEMA_FORMATS:
+            raise ValueError(f"Invalid schema format: {self.schema_format}")
 
 
 class CandidateList(BaseModel):
@@ -866,7 +877,7 @@ def main():
             for idx, sample in enumerate(test_data)
             if sample["question_id"] in missing_question_ids
         ]
-        for idx, future in enumerate(tqdm.tqdm(futures, total=len(test_data))):
+        for idx, future in enumerate(tqdm.tqdm(futures, total=len(missing_question_ids))):
             question_id = test_data[idx]["question_id"]
             predicted_schema_linking_outputs: list[SchemaLinkingInfo] = future.result()
             for output in predicted_schema_linking_outputs:
@@ -1002,7 +1013,7 @@ def main():
             )
             for sample in missing_samples
         ]
-        for future in tqdm.tqdm(futures, total=len(test_data)):
+        for future in tqdm.tqdm(futures, total=len(missing_samples)):
             candidates: list[Candidate] = future.result()
             if len(candidates) == 0:
                 logger.warning(f"No candidates found for sample {sample['question_id']}")
