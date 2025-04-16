@@ -3,21 +3,18 @@ import copy
 import json
 import os
 import sys
-import warnings
 
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.pool import ThreadPool
 from typing import Annotated, Literal
 
-import dill as pickle
 import numpy as np
 import tqdm
 import yaml
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import AfterValidator, BaseModel, field_validator
+from pydantic import AfterValidator, BaseModel
 
 from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 
@@ -40,12 +37,13 @@ from text2sql.pipeline.selection import select_best_candidate
 def verify_schema_format(schema_format: str):
     if schema_format not in SCHEMA_FORMATS:
         raise ValueError(f"Invalid schema format: {schema_format}")
+    return schema_format
 
 
 class SchemaLinkingInfo(BaseModel):
     question_id: int
     model_name: str
-    schema_format: Annotated[str, verify_schema_format]
+    schema_format: Annotated[str, AfterValidator(verify_schema_format)]
     messages: list[dict]
     generator_output: GenerationResult
     prediction: str
@@ -69,7 +67,7 @@ class Candidate(BaseModel):
     question_id: int
     config_index: int
     sample: dict
-    schema_format: Annotated[str, verify_schema_format]
+    schema_format: Annotated[str, AfterValidator(verify_schema_format)]
     schema_filtering: Literal["none", "table", "column"]
     messages: list[dict]
     generator_output: GenerationResult
@@ -725,6 +723,8 @@ def main():
         if "top_k" in candidate_config_data:
             top_k = candidate_config_data["top_k"]
         candidate_configs: list[dict] = candidate_config_data["configs"]
+    for config_idx, config in enumerate(candidate_configs):
+        logger.debug(f"Candidate config {config_idx}: {json.dumps(config)}")
 
     # verify candidate config keys:
     for config in candidate_configs:
