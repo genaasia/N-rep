@@ -133,7 +133,7 @@ def prepare_dataset_information(
     """
     logger.info(f"Loading dataset from {test_database_path}...")
     dataset = SqliteDataset(test_database_path)
-    logger.info(f"Creating schema manager and generating schema descriptions, this may takes some time...")
+    logger.info("Creating schema manager and generating schema descriptions, this may takes some time...")
     schema_manager = SchemaManager(dataset, table_descriptions_path=table_descriptions_path)
     return dataset, schema_manager
 
@@ -552,7 +552,7 @@ def run_candidate_selection(
             selected_sql=candidates[0].candidate_sql,
         )
     sample_dicts: list[dict] = []
-    for config_idx, candidate in enumerate(candidates):
+    for candidate in candidates:
         sql_query = candidate.candidate_sql
         execution_result_dict: dict = dataset.validate_query(database, sql_query)
         execution_results: list[dict] = execution_result_dict.get("execution_result", [])
