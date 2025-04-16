@@ -60,7 +60,6 @@ class RewriteInfo(BaseModel):
     question_id: int
     original_sql: str
     rewritten_sql: str
-    is_processed: bool  # whether the candidate went through the rewrite check, whether it was rewritten or not
     is_rewritten: bool  # whether the candidate was rewritten successfully (even if rewritten sql is same)
     messages: list[dict]
     generator_output: GenerationResult | None
@@ -457,7 +456,6 @@ def run_sql_rewrite(
         question_id=candidate.question_id,
         original_sql=original_sql,
         rewritten_sql=sql_prediction,
-        is_processed=True,
         is_rewritten=is_rewritten,
         messages=messages,
         generator_output=rewrite_output,
@@ -501,36 +499,19 @@ def run_candidate_rewrite_check(
     max_retries = 3
     attempt = 0
 
-    predicted_sql: str = candidate.candidate_sql
-    current_sql = predicted_sql
-
-    # default output
-    rewritten_output = RewriteInfo(
-        question_id=candidate.question_id,
-        original_sql=predicted_sql,
-        rewritten_sql=predicted_sql,
-        is_processed=False,
-        is_rewritten=False,
-        messages=[],
-        generator_output=None,
-    )
-
     while attempt < max_retries:
         # Check current SQL execution
-        execution_result_dict: dict = dataset.validate_query(database, current_sql)
+        execution_result_dict: dict = dataset.validate_query(database, candidate.candidate_sql)
         execution_results: list[dict] = execution_result_dict.get("execution_result", [])
 
         # If no rewrite needed, return current SQL
         if not check_need_rewrite(execution_results):
-            rewritten_output.is_processed = True
-            rewritten_output.is_rewritten = False
-            candidate.rewrite_info.append(rewritten_output)
             candidate.rewrite_checked = True
             return candidate
 
         # Get filtered schema for rewrite
         filtered_schema_description = get_filtered_schema_description_for_rewrite(
-            database, schema_manager.get_schema_mapping(database), current_sql
+            database, schema_manager.get_schema_mapping(database), candidate.candidate_sql
         )
 
         try:
@@ -546,8 +527,6 @@ def run_candidate_rewrite_check(
 
         attempt += 1
 
-    candidate.candidate_sql = current_sql
-    candidate.rewrite_info.append(rewritten_output)
     candidate.rewrite_checked = True  # should this be true even if max tries exceeded?
     return candidate
 
