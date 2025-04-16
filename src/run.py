@@ -969,7 +969,7 @@ def main():
                 fewshot_retrieval_result: list[dict] = fewshot_retrieval_results[question_id]
             else:
                 fewshot_retrieval_result: list[dict] = run_fewshot_retrieval(
-                    embedding_results[question_id].embedding, retriever, top_k=top_k
+                    embedding_results[question_id].embeddings[0], retriever, top_k=top_k
                 )
             fewshot_retrieval_results[question_id] = fewshot_retrieval_result
             with open(os.path.join(fewshot_retrieval_output_dir, f"fewshot_qid-{question_id:04d}.json"), "w") as f:

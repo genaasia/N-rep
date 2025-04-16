@@ -16,7 +16,7 @@ class EmbeddingResult(BaseModel):
     """result of a single embedding call"""
 
     texts: list[str]
-    embedding: list[float] | list[list[float]]
+    embeddings: list[list[float]]
     input_characters: int
     inf_time_ms: int
 
@@ -59,7 +59,7 @@ class BaseEmbedder(ABC):
                 time.sleep(self.sleep_ms / 1000)
         return EmbeddingResult(
             texts=input_texts,
-            embedding=embeddings,
+            embeddings=embeddings,
             input_characters=character_count,
             inf_time_ms=inf_time_ms,
         )
@@ -68,11 +68,11 @@ class BaseEmbedder(ABC):
         """embed a single text"""
         texts = [text[: self.max_chars]]
         start_time = time.time()
-        embedding = self._embed_batch(texts)[0]
+        embeddings = self._embed_batch(texts)
         end_time = time.time()
         return EmbeddingResult(
             texts=texts,
-            embedding=embedding,
+            embeddings=embeddings,
             input_characters=len(text[: self.max_chars]),
             inf_time_ms=int((end_time - start_time) * 1000),
         )
