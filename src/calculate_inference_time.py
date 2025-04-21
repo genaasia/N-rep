@@ -1,37 +1,18 @@
 import argparse
-import copy
 import json
 import os
-import sys
 
-from concurrent.futures import ThreadPoolExecutor
-from multiprocessing.pool import ThreadPool
 from typing import Annotated, Literal
 
-import numpy as np
-import tqdm
-import yaml
+import pandas as pd
 
 from dotenv import load_dotenv
 from loguru import logger
 from pydantic import AfterValidator, BaseModel
 
-from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
-
-from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
 from text2sql.data.datasets import SCHEMA_FORMATS
-from text2sql.data.schema_to_text import schema_to_datagrip_format
-from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder, EmbeddingResult
-from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator, GenerationResult, TokenUsage
-from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
-from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
-from text2sql.engine.prompts.formatters import RewritePromptFormatter
-from text2sql.engine.retrieval import LocalRetriever
-from text2sql.engine.generation.postprocessing import extract_first_code_block
-from text2sql.utils.postprocess import get_table_names_from_query
-from text2sql.utils import parse_json_from_prediction
-
-from text2sql.pipeline.selection import select_best_candidate
+from text2sql.engine.embeddings import EmbeddingResult
+from text2sql.engine.generation import GenerationResult
 
 
 def verify_schema_format(schema_format: str):
@@ -98,7 +79,10 @@ class InferenceTimeInfo(BaseModel):
     embedding_ms: int | None = None
     sql_generation_ms: int | None = None
     sql_rewrite_ms: int | None = None
-    candidate_selection_ms: int | None = None
+    sql_rewrite_max_count: int | None = None
+    sql_rewrite_ttl_count: int | None = None
+    chase_selection_ms: int | None = None
+    chase_selection_ttl_count: int | None = None
     total_ms: int | None = None
 
 
@@ -117,12 +101,6 @@ def main():
         default="../outputs",
         help="target output path",
     )
-    parser.add_argument(
-        "--debug",
-        type=int,
-        default=None,
-        help="run in debug mode",
-    )
     args = parser.parse_args()
 
     load_dotenv()
@@ -136,17 +114,7 @@ def main():
     #############################
     # preprocessing
     #############################
-    # check for debug mode
-    if args.debug:
-        logger.warning(f"!!!!! DEBUG - Running on {args.debug} data subset !!!!!")
-        test_data = test_data[: args.debug]
-    else:
-        logger.remove()
-        logger.add(sys.stderr, level="INFO")
     test_question_ids = [sample["question_id"] for sample in test_data]
-    logger.debug(f"First 10 test question ids: {test_question_ids[:10]}")
-
-    inference_time_info: list[InferenceTimeInfo] = []
 
     #############################
     # schema linking
@@ -245,15 +213,16 @@ def main():
     #############################
     # inference time
     #############################
+    inference_time_info: list[InferenceTimeInfo] = []
     for question_id in test_question_ids:
         # Initialize inference time info for this question
         info = InferenceTimeInfo(question_id=question_id)
 
         # Calculate schema linking time - get max time over all models and schema formats
-        schema_linking_times = []
+        schema_linking_times: list[int] = []
         for model_name in schema_linking_results[question_id]:
             for schema_format in schema_linking_results[question_id][model_name]:
-                schema_linking_info = schema_linking_results[question_id][model_name][schema_format]
+                schema_linking_info: SchemaLinkingInfo = schema_linking_results[question_id][model_name][schema_format]
                 if schema_linking_info.generator_output and schema_linking_info.generator_output.tokens:
                     schema_linking_times.append(schema_linking_info.generator_output.tokens.inf_time_ms)
 
@@ -266,10 +235,10 @@ def main():
 
         # Calculate SQL generation and rewrite time
         if question_id in sql_candidate_lists:
-            candidates = sql_candidate_lists[question_id]
+            candidates: list[Candidate] = sql_candidate_lists[question_id]
 
             # Get max generation time across all candidates
-            generation_times = []
+            generation_times: list[int] = []
             for candidate in candidates:
                 if candidate.generator_output and candidate.generator_output.tokens:
                     generation_times.append(candidate.generator_output.tokens.inf_time_ms)
@@ -278,29 +247,34 @@ def main():
                 info.sql_generation_ms = max(generation_times)
 
             # Calculate rewrite time - sum all rewrites for each candidate and take the max total
-            rewrite_times = []
+            rewrite_times: list[int] = []
+            rewrite_counts: list[int] = []
             for candidate in candidates:
                 if candidate.rewrite_info:
-                    candidate_rewrite_time = 0
+                    candidate_rewrite_time: int = 0
                     for rewrite in candidate.rewrite_info:
                         if rewrite.generator_output and rewrite.generator_output.tokens:
                             candidate_rewrite_time += rewrite.generator_output.tokens.inf_time_ms
                     rewrite_times.append(candidate_rewrite_time)
-
+                    rewrite_counts.append(len(candidate.rewrite_info))
             if rewrite_times:
                 info.sql_rewrite_ms = max(rewrite_times)
+                info.sql_rewrite_max_count = max(rewrite_counts)
+                info.sql_rewrite_ttl_count = sum(rewrite_counts)
 
         # Calculate candidate selection time
+        selection_count: int = 0
         if question_id in candidate_selections:
-            selection = candidate_selections[question_id]
+            selection: CandidateSelection = candidate_selections[question_id]
             if selection.generator_outputs:
-                selection_times = []
+                selection_times: list[int] = []
                 for output in selection.generator_outputs:
                     if output.tokens:
                         selection_times.append(output.tokens.inf_time_ms)
-
+                        selection_count += 1
                 if selection_times:
-                    info.candidate_selection_ms = max(selection_times)
+                    info.chase_selection_ms = max(selection_times)
+            info.chase_selection_ttl_count = selection_count
 
         # calculate total time. exclude None values
         total_time = 0
@@ -309,12 +283,20 @@ def main():
             info.embedding_ms,
             info.sql_generation_ms,
             info.sql_rewrite_ms,
-            info.candidate_selection_ms,
+            info.chase_selection_ms,
         ]:
             if step_time:
                 total_time += step_time
 
         info.total_ms = total_time
+
+        # "soft" checks
+        if info.schema_linking_ms is None:
+            logger.warning(f"Schema linking time is None for question ID: {question_id}")
+        if info.embedding_ms is None:
+            logger.warning(f"Embedding time is None for question ID: {question_id}")
+        if info.sql_generation_ms is None:
+            logger.warning(f"SQL generation time is None for question ID: {question_id}")
 
         inference_time_info.append(info)
 
@@ -323,9 +305,6 @@ def main():
     #############################
 
     # Save as CSV using pandas
-    import pandas as pd
-
-    # Convert to DataFrame
     df = pd.DataFrame([info.model_dump() for info in inference_time_info])
 
     # Fill None values with 0 for time columns
@@ -340,7 +319,7 @@ def main():
     # calculate min, first quartile, median, third quartile, max, std dev and mean for each time
     time_statistics: list[dict] = []
     for column in df.columns:
-        if column in ["question_id", "total_ms"]:
+        if column in ["question_id"]:
             continue
         time_statistics.append(
             {
