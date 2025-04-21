@@ -260,7 +260,7 @@ class GCPGenerator(BaseGenerator):
 
         # get token usage
         if hasattr(result, "usage_metadata"):
-            cached_tokens = result.usage_metadata.candidates_token_count
+            cached_tokens = result.usage_metadata.cached_content_token_count
             prompt_tokens = result.usage_metadata.prompt_token_count
             output_tokens = result.usage_metadata.candidates_token_count
             total_tokens = result.usage_metadata.total_token_count
