@@ -236,6 +236,7 @@ class GCPGenerator(BaseGenerator):
         self.model = model
         self.post_func = post_func
         self.client = genai.Client(api_key=api_key)
+        self.history = []
 
     @retry(wait=wait_random_exponential(min=3, max=30), stop=stop_after_attempt(3))
     def generate(self, messages: list[dict], **kwargs) -> GenerationResult:
@@ -296,6 +297,7 @@ class GCPGenerator(BaseGenerator):
             total_tokens=total_tokens,
             inf_time_ms=int((end_time - start_time) * 1000),
         )
+        self.history = chat.get_history()
         return GenerationResult(
             model=self.model,
             text=self.post_func(result.text),
@@ -322,6 +324,7 @@ class LegacyGCPGenerator(BaseGenerator):
         """
         self.model = model
         self.post_func = post_func
+        self.history = []
         genai_legacy.configure(api_key=api_key)
 
     @retry(wait=wait_random_exponential(min=3, max=30), stop=stop_after_attempt(3))
@@ -374,6 +377,7 @@ class LegacyGCPGenerator(BaseGenerator):
             total_tokens=total_tokens,
             inf_time_ms=int((end_time - start_time) * 1000),
         )
+        self.history = chat.history
         return GenerationResult(
             model=self.model,
             text=self.post_func(result.text),
