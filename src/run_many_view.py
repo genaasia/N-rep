@@ -324,14 +324,14 @@ def run_fewshot_retrieval(
     return retriever.query(embedding, top_k=top_k)
 
 
-def run_sql_generation(
+def run_sql_generation_multi_view(
     generator: BaseGenerator,
     sample: dict,
     config_index: int,
     few_shot_results: list[dict],
-    schema_linking_outputs: SchemaLinkingInfo,
+    schema_description: str,
     schema_format: str,
-    schema_filtering: Literal["none", "table", "column"],
+    schema_filtering_mode: Literal["none", "table", "column"],
 ) -> Candidate:
     """run the sql generation task"""
     # format messages
@@ -342,12 +342,7 @@ def run_sql_generation(
         few_shot_target_key="SQL",
         fewshot_schema_key=schema_format,
     )
-    if schema_filtering == "table":
-        schema_description = schema_linking_outputs.table_description
-    elif schema_filtering == "column":
-        schema_description = schema_linking_outputs.column_description
-    else:
-        schema_description = schema_linking_outputs.full_description
+
     messages = message_formatter.generate_messages(
         schema_description=schema_description,
         query=sample["question"],
@@ -365,7 +360,7 @@ def run_sql_generation(
         config_index=config_index,
         sample=sample,
         schema_format=schema_format,
-        schema_filtering=schema_filtering,
+        schema_filtering=schema_filtering_mode,
         messages=messages,
         generator_output=prediction_output,
         original_sql=sql_prediction,
@@ -373,12 +368,32 @@ def run_sql_generation(
     )
 
 
-def run_candidate_sql_generations(
+def create_joined_schema_description(schema_linking_outputs: dict[str, dict[str, SchemaLinkingInfo]], mode: str) -> str:
+    """create a merged schema description from all 'views'"""
+    if mode not in ("none", "table", "column"):
+        raise ValueError(f"Invalid mode: {mode}")
+    schema_description = ""
+    view_counter = 0
+    for model in schema_linking_outputs:
+        for schema_format in schema_linking_outputs[model]:
+            if mode == "none":
+                view_description = schema_linking_outputs[model][schema_format].full_description
+            elif mode == "table":
+                view_description = schema_linking_outputs[model][schema_format].table_description
+            elif mode == "column":
+                view_description = schema_linking_outputs[model][schema_format].column_description
+            view_counter += 1
+            schema_description += f"### schema view {view_counter}: {schema_format}:\n\n{view_description}\n\n"
+    return schema_description.strip("\n")
+
+
+def run_candidate_multi_view_sql_generations(
     sample: dict,
     generator: BaseGenerator,
     candidate_configs: list[dict],
     candidate_schema_linking_outputs: dict[str, dict[str, SchemaLinkingInfo]],
     few_shot_results: list[dict],
+    schema_filtering_mode: Literal["none", "table", "column"],
 ) -> list[Candidate]:
     """run the candidate sql generation task
 
@@ -391,36 +406,21 @@ def run_candidate_sql_generations(
     Returns:
         candidate_sqls: the candidate sqls
     """
-    # built args
-    gen_args: list[dict] = []
-    for candidate_idx, candidate_config in enumerate(candidate_configs):
-        model = candidate_config["model"]
-        schema_format = candidate_config["schema_format"]
-        schema_filtering = candidate_config["schema_filtering"]
-        schema_linking_output: SchemaLinkingInfo = candidate_schema_linking_outputs[model][schema_format]
+    schema_description = create_joined_schema_description(candidate_schema_linking_outputs, mode=schema_filtering_mode)
+    if not schema_description:
+        raise NotImplementedError("schema_description not implemented")
 
-        gen_args.append(
-            {
-                "generator": generator,
-                "sample": sample,
-                "config_index": candidate_idx,
-                "few_shot_results": few_shot_results,
-                "schema_linking_outputs": schema_linking_output,
-                "schema_format": schema_format,
-                "schema_filtering": schema_filtering,
-            }
-        )
+    gen_args = {
+        "generator": generator,
+        "sample": sample,
+        "config_index": 0,
+        "few_shot_results": few_shot_results,
+        "schema_description": schema_description,
+        "schema_format": "multi",
+        "schema_filtering": schema_filtering_mode,
+    }
 
-    def run_sql_generation_wrapper(job_dict) -> str:
-        try:
-            return run_sql_generation(**job_dict)
-        except Exception as e:
-            # handle e.g. the StopCandidateException due to RECITATION
-            logger.warning(f"Error generating SQL: {type(e).__name__}: {str(e)}")
-            return "", []
-
-    with ThreadPool(len(gen_args)) as pool:
-        results: list[Candidate] = list(pool.imap(run_sql_generation_wrapper, gen_args))
+    result = run_sql_generation_multi_view(**gen_args)
 
     return results
 
@@ -999,7 +999,7 @@ def main():
         with ThreadPoolExecutor(max_workers=min(2, args.num_workers)) as executor:
             futures = [
                 executor.submit(
-                    run_candidate_sql_generations,
+                    run_candidate_multi_view_sql_generations,
                     sample,
                     gcp_generator_candidate,
                     candidate_configs,
