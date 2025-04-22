@@ -12,6 +12,7 @@ openai
 cohere
 boto3
 google-generativeai
+google-genai
 
 # Text2SQL specific
 sqlparse
