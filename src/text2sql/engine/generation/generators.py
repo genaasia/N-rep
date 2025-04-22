@@ -275,13 +275,16 @@ class GCPGenerator(BaseGenerator):
 
         # get token usage
         if hasattr(result, "usage_metadata"):
-            cached_tokens = result.usage_metadata.candidates_token_count
+            cached_tokens = result.usage_metadata.cached_content_token_count
+            cached_tokens = 0 if cached_tokens is None else cached_tokens
             prompt_tokens = result.usage_metadata.prompt_token_count
-            output_tokens = result.usage_metadata.candidates_token_count
-            total_tokens = result.usage_metadata.total_token_count
+            prompt_tokens = 0 if prompt_tokens is None else prompt_tokens
             reasoning_tokens = result.usage_metadata.thoughts_token_count
-            if reasoning_tokens is None:
-                reasoning_tokens = 0
+            reasoning_tokens = 0 if reasoning_tokens is None else reasoning_tokens
+            output_tokens = result.usage_metadata.candidates_token_count
+            output_tokens = 0 if output_tokens is None else output_tokens
+            total_tokens = result.usage_metadata.total_token_count
+            total_tokens = 0 if total_tokens is None else total_tokens
             status = STATUS_OK
         else:
             cached_tokens = 0
