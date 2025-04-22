@@ -3,7 +3,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Callable
 
-import google.generativeai as genai
+import google.generativeai as genai_legacy
 
 from openai import AzureOpenAI, OpenAI
 from pydantic import BaseModel
@@ -202,6 +202,84 @@ class GCPGenerator(BaseGenerator):
             client = genai.GenerativeModel(self.model, system_instruction=system_instruction, generation_config=kwargs)
         else:
             client = genai.GenerativeModel(self.model, generation_config=kwargs)
+        # format messages to GCP format
+        history = []
+        for message in messages[:-1]:
+            if message["role"] in ["assistant", "user"]:
+                if "content" not in message:
+                    print(f"{message=}")
+                new_message = {"role": message["role"], "parts": message["content"]}
+                history.append(new_message)
+
+        # run inference
+        start_time = time.time()
+        chat = client.start_chat(history=history)
+        result = chat.send_message(messages[-1]["content"])
+        end_time = time.time()
+
+        # get token usage
+        if hasattr(result, "usage_metadata"):
+            cached_tokens = result.usage_metadata.candidates_token_count
+            prompt_tokens = result.usage_metadata.prompt_token_count
+            output_tokens = result.usage_metadata.candidates_token_count
+            total_tokens = result.usage_metadata.total_token_count
+            status = STATUS_OK
+        else:
+            cached_tokens = 0
+            prompt_tokens = 0
+            output_tokens = 0
+            total_tokens = 0
+            status = "error: no usage metadata"
+        token_usage = TokenUsage(
+            cached_tokens=cached_tokens,
+            prompt_tokens=prompt_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            inf_time_ms=int((end_time - start_time) * 1000),
+        )
+        return GenerationResult(
+            model=self.model,
+            text=self.post_func(result.text),
+            tokens=token_usage,
+            status=status,
+        )
+
+
+class LegacyGCPGenerator(BaseGenerator):
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        post_func: Callable[[str], str] = identity,
+    ):
+        """generate text using GCP API
+
+        Args:
+            api_key (str): gcp api key
+            model (str): gemini model name
+            kwargs: additional gemini specific arguments
+
+        """
+        self.model = model
+        self.post_func = post_func
+        genai_legacy.configure(api_key=api_key)
+
+    @retry(wait=wait_random_exponential(min=3, max=30), stop=stop_after_attempt(3))
+    def generate(self, messages: list[dict], **kwargs) -> GenerationResult:
+        # create client depending on system prompt
+        system_instruction = "\n".join([message["content"] for message in messages if message["role"] == "system"])
+        if system_instruction:
+            client = genai_legacy.GenerativeModel(
+                self.model,
+                system_instruction=system_instruction,
+                generation_config=kwargs,
+            )
+        else:
+            client = genai_legacy.GenerativeModel(
+                self.model,
+                generation_config=kwargs,
+            )
         # format messages to GCP format
         history = []
         for message in messages[:-1]:
