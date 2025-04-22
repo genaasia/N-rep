@@ -5,6 +5,8 @@ from typing import Callable
 
 import google.generativeai as genai_legacy
 
+from google import genai
+from google.genai import types
 from openai import AzureOpenAI, OpenAI
 from pydantic import BaseModel
 from tenacity import retry, wait_random_exponential, stop_after_attempt
@@ -192,28 +194,40 @@ class GCPGenerator(BaseGenerator):
         """
         self.model = model
         self.post_func = post_func
-        genai.configure(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
 
     @retry(wait=wait_random_exponential(min=3, max=30), stop=stop_after_attempt(3))
     def generate(self, messages: list[dict], **kwargs) -> GenerationResult:
-        # create client depending on system prompt
+
+        # create config depending on system prompt
         system_instruction = "\n".join([message["content"] for message in messages if message["role"] == "system"])
         if system_instruction:
-            client = genai.GenerativeModel(self.model, system_instruction=system_instruction, generation_config=kwargs)
+            config = types.GenerateContentConfig(system_instruction=system_instruction, **kwargs)
         else:
-            client = genai.GenerativeModel(self.model, generation_config=kwargs)
+            config = types.GenerateContentConfig(**kwargs)
+
         # format messages to GCP format
         history = []
         for message in messages[:-1]:
+            # new API uses "model" instead of "assistant" for all models
             if message["role"] in ["assistant", "user"]:
-                if "content" not in message:
-                    print(f"{message=}")
-                new_message = {"role": message["role"], "parts": message["content"]}
-                history.append(new_message)
+                if message["role"] == "assistant":
+                    role = "model"
+                else:
+                    role = "user"
+                message = {"role": role, "parts": [{"text": message["content"]}]}
+                history.append(message)
+
+        # set model, history in the create method
+        chat = self.client.chats.create(
+            model="gemini-2.5-flash-preview-04-17",
+            config=config,
+            history=history,
+        )
 
         # run inference
         start_time = time.time()
-        chat = client.start_chat(history=history)
+        # run inference with text input
         result = chat.send_message(messages[-1]["content"])
         end_time = time.time()
 
@@ -223,6 +237,9 @@ class GCPGenerator(BaseGenerator):
             prompt_tokens = result.usage_metadata.prompt_token_count
             output_tokens = result.usage_metadata.candidates_token_count
             total_tokens = result.usage_metadata.total_token_count
+            reasoning_tokens = result.usage_metadata.reasoning_token_count
+            if reasoning_tokens is None:
+                reasoning_tokens = 0
             status = STATUS_OK
         else:
             cached_tokens = 0
