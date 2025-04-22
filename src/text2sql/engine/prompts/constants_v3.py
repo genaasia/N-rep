@@ -243,7 +243,7 @@ You must ONLY output the chain of thought reasoning steps and ONE SINGLE valid S
 GENA_USER_QUERY_EVIDENCE_TEMPLATE = (
     "text query: {user_question}\nhint:{evidence}\nplease give me a {sql_dialect} SQL query as markdown code block."
 )
-GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE = "database schema description: {schema_description}\n\ntext query: {user_question}\nhint:{evidence}\nplease give me a {sql_dialect} SQL query as markdown code block."
+GENA_USER_QUERY_EVIDENCE_SCHEMA_TEMPLATE = "database schema description:\n{schema_description}\n\ntext query: {user_question}\nhint:{evidence}\nplease give me a {sql_dialect} SQL query as markdown code block."
 GENA_USER_QUERY_SCHEMA_TEMPLATE = "database schema description: {schema_description}\n\ntext query: {user_question}\nplease give me a {sql_dialect} SQL query as markdown code block."
 
 
