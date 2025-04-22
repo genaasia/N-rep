@@ -271,6 +271,24 @@ class GCPGenerator(BaseGenerator):
         start_time = time.time()
         # run inference with text input
         result: types.GenerateContentResponse = chat.send_message(messages[-1]["content"])
+        result_text = result.text
+        if not result_text:
+            result_text = ""
+            status = "unknown generation error"
+            # catch safety issues
+            if hasattr(result, "prompt_feedback"):
+                if hasattr(result.prompt_feedback, "block_reason_message"):
+                    if result.prompt_feedback.block_reason_message:
+                        _error = result.prompt_feedback.block_reason_message
+            # catch copyright issues
+            if hasattr(result, "candidates") and len(result.candidates) > 0:
+                candidate = result.candidates[0]
+                if hasattr(candidate, "finish_reason"):
+                    if candidate.finish_reason == "RECITATION":
+                        _error = "RECITATION"
+            if _error:
+                status = _error
+
         end_time = time.time()
 
         # get token usage
@@ -291,7 +309,8 @@ class GCPGenerator(BaseGenerator):
             prompt_tokens = 0
             output_tokens = 0
             total_tokens = 0
-            status = "error: no usage metadata"
+            if status == STATUS_OK:
+                status = "error: no usage metadata"
         token_usage = TokenUsage(
             cached_tokens=cached_tokens,
             prompt_tokens=prompt_tokens,
@@ -303,7 +322,7 @@ class GCPGenerator(BaseGenerator):
         self.history = chat.get_history()
         return GenerationResult(
             model=self.model,
-            text=self.post_func(result.text),
+            text=self.post_func(result_text),
             tokens=token_usage,
             status=status,
         )

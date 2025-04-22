@@ -22,7 +22,14 @@ from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
 from text2sql.data.datasets import SCHEMA_FORMATS
 from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder, EmbeddingResult
-from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator, GenerationResult, TokenUsage
+from text2sql.engine.generation import (
+    BaseGenerator,
+    AzureGenerator,
+    GCPGenerator,
+    GenerationResult,
+    TokenUsage,
+    STATUS_OK,
+)
 from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
 from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.prompts.formatters import RewritePromptFormatter
@@ -35,7 +42,7 @@ from text2sql.pipeline.selection import select_best_candidate
 
 
 def verify_schema_format(schema_format: str):
-    if schema_format not in SCHEMA_FORMATS:
+    if schema_format not in SCHEMA_FORMATS + ["multi"]:
         raise ValueError(f"Invalid schema format: {schema_format}")
     return schema_format
 
@@ -351,7 +358,10 @@ def run_sql_generation_multi_view(
     )
     # run inference
     prediction_output: GenerationResult = generator.generate(messages, temperature=0.0)
-    raw_prediction = prediction_output.text
+    if prediction_output.status != STATUS_OK:
+        qid = sample["question_id"]
+        logger.warning(f"{qid}: Error generating SQL: {prediction_output.status}")
+    raw_prediction = prediction_output.text if prediction_output.status == STATUS_OK else ""
     sql_prediction = extract_first_code_block(raw_prediction)
     if not sql_prediction:
         sql_prediction = raw_prediction
@@ -417,12 +427,12 @@ def run_candidate_multi_view_sql_generations(
         "few_shot_results": few_shot_results,
         "schema_description": schema_description,
         "schema_format": "multi",
-        "schema_filtering": schema_filtering_mode,
+        "schema_filtering_mode": schema_filtering_mode,
     }
 
-    result = run_sql_generation_multi_view(**gen_args)
+    result: Candidate = run_sql_generation_multi_view(**gen_args)
 
-    return results
+    return [result]
 
 
 def run_sql_rewrite(
@@ -641,6 +651,12 @@ def main():
         help="path to the column_meaning.json file, leave blank if not used",
     )
     parser.add_argument(
+        "--multiview-filtering-mode",
+        type=str,
+        default="none",
+        help="schema filtering mode for multiview, must be one of 'none', 'table', 'column'",
+    )
+    parser.add_argument(
         "--debug",
         type=int,
         default=None,
@@ -685,7 +701,8 @@ def main():
         raise ValueError("AWS_ACCESS_KEY_ID is not set")
     if os.getenv("AWS_SECRET_ACCESS_KEY") is None:
         raise ValueError("AWS_SECRET_ACCESS_KEY is not set")
-
+    if args.multiview_filtering_mode not in ("none", "table", "column"):
+        raise ValueError(f"Invalid multiview filtering mode: {args.multiview_filtering_mode}")
     logger.info("Validating input files...")
     # validate all required json files exist
     for path in [
@@ -994,9 +1011,11 @@ def main():
     missing_samples = [sample for sample in test_data if sample["question_id"] not in sql_candidate_lists]
 
     if len(missing_samples) > 0:
-        logger.info(f"Running sql generation for {len(missing_samples)} samples")
+        logger.info(
+            f"Running sql generation for {len(missing_samples)} samples in multiview {args.multiview_filtering_mode} mode"
+        )
         # run sql generation for each sample, using threading executor
-        with ThreadPoolExecutor(max_workers=min(2, args.num_workers)) as executor:
+        with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
             futures = [
                 executor.submit(
                     run_candidate_multi_view_sql_generations,
@@ -1005,6 +1024,7 @@ def main():
                     candidate_configs,
                     schema_linking_results[sample["question_id"]],
                     fewshot_retrieval_results[sample["question_id"]],
+                    args.multiview_filtering_mode,
                 )
                 for sample in missing_samples
             ]
@@ -1034,9 +1054,9 @@ def main():
     # check test_data sample["question_id"] in sql_candidate_lists
     for sample in test_data:
         assert sample["question_id"] in sql_candidate_lists
-    # check candidate list all have same lengths
+    # check candidate list all have same lengths (1)
     for question_id, candidates in sql_candidate_lists.items():
-        assert len(candidates) == len(candidate_configs)
+        assert len(candidates) == 1
     logger.info("Sql generation complete")
 
     #############################

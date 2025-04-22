@@ -647,6 +647,12 @@ def main():
         help="run in debug mode (do small subset of data, default is None)",
     )
     parser.add_argument(
+        "--flip-fewshot-order",
+        action="store_true",
+        default=False,
+        help="flip the order of fewshot examples",
+    )
+    parser.add_argument(
         "--num-workers",
         type=int,
         default=4,
@@ -942,7 +948,9 @@ def main():
     logger.info(f"Loaded {len(fewshot_retrieval_results)} cached fewshot retrieval results")
 
     if len(missing_samples) > 0:
-        logger.info(f"Running fewshot retrieval for {len(missing_samples)} samples")
+        logger.info(
+            f"Running top K {top_k} fewshot retrieval for {len(missing_samples)} samples with flip_fewshot_order={args.flip_fewshot_order}"
+        )
         # run fewshot retrieval for each sample
         for sample in tqdm.tqdm(missing_samples):
             question_id = sample["question_id"]
@@ -952,6 +960,8 @@ def main():
                 fewshot_retrieval_result: list[dict] = run_fewshot_retrieval(
                     embedding_results[question_id].embeddings[0], retriever, top_k=top_k
                 )
+            if args.flip_fewshot_order:
+                fewshot_retrieval_result = fewshot_retrieval_result[::-1]
             fewshot_retrieval_results[question_id] = fewshot_retrieval_result
             with open(os.path.join(fewshot_retrieval_output_dir, f"fewshot_qid-{question_id:04d}.json"), "w") as f:
                 json.dump(fewshot_retrieval_result, f, indent=2)
