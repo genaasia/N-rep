@@ -261,7 +261,7 @@ class GCPGenerator(BaseGenerator):
 
         # set model, history in the create method
         chat = self.client.chats.create(
-            model="gemini-2.5-flash-preview-04-17",
+            model=self.model,
             config=config,
             history=history,
         )
@@ -269,7 +269,7 @@ class GCPGenerator(BaseGenerator):
         # run inference
         start_time = time.time()
         # run inference with text input
-        result = chat.send_message(messages[-1]["content"])
+        result: types.GenerateContentResponse = chat.send_message(messages[-1]["content"])
         end_time = time.time()
 
         # get token usage
@@ -278,7 +278,7 @@ class GCPGenerator(BaseGenerator):
             prompt_tokens = result.usage_metadata.prompt_token_count
             output_tokens = result.usage_metadata.candidates_token_count
             total_tokens = result.usage_metadata.total_token_count
-            reasoning_tokens = result.usage_metadata.reasoning_token_count
+            reasoning_tokens = result.usage_metadata.thoughts_token_count
             if reasoning_tokens is None:
                 reasoning_tokens = 0
             status = STATUS_OK
@@ -291,6 +291,7 @@ class GCPGenerator(BaseGenerator):
         token_usage = TokenUsage(
             cached_tokens=cached_tokens,
             prompt_tokens=prompt_tokens,
+            reasoning_tokens=reasoning_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             inf_time_ms=int((end_time - start_time) * 1000),
