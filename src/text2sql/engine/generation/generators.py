@@ -432,7 +432,7 @@ class OpenAIGenerator(BaseGenerator):
         self.post_func = post_func
         self.client: OpenAI = get_openai_client(api_key=api_key, base_url=base_url, **kwargs)
 
-    @retry(wait=wait_random_exponential(min=5, max=60), stop=stop_after_attempt(8))
+    @retry(wait=wait_random_exponential(min=5, max=60), stop=stop_after_attempt(3))
     def generate(self, messages: list[dict], **kwargs) -> GenerationResult:
         """embed one batch of texts with azure"""
 
@@ -441,23 +441,61 @@ class OpenAIGenerator(BaseGenerator):
         chat_completion = self.client.chat.completions.create(model=self.model, messages=messages, **kwargs)
         end_time = time.time()
 
-        # get token usage
+        # as of 4.19.2025, the OpenAI API REST API uses "input_tokens" and "output_tokens"
+        # ref: https://platform.openai.com/docs/api-reference/responses/get
+        # however, as of version 1.61.1, the python openai client uses "prompt_tokens" and "completion_tokens" with azure
+        # tested with API version "2024-10-21" and "2024-12-01-preview" with both gpt-4o-mini and o3-mini
+        # in case of potential future changes, try to use the current names, but if attr not exist, use the new names
+
+        # get prompt (input) token usage, support prompt_tokens as well as input_tokens (new api?)
+        if hasattr(chat_completion.usage, "prompt_tokens"):
+            prompt_tokens = chat_completion.usage.prompt_tokens
+        elif hasattr(chat_completion.usage, "input_tokens"):
+            prompt_tokens = chat_completion.usage.input_tokens
+        else:
+            prompt_tokens = 0
+
+        # get cached input token usage, support new api(?) as well
         if hasattr(chat_completion.usage, "prompt_tokens_details") and hasattr(
             chat_completion.usage.prompt_tokens_details, "cached_tokens"
         ):
             cached_tokens = chat_completion.usage.prompt_tokens_details.cached_tokens
+        elif hasattr(chat_completion.usage, "input_tokens_details") and hasattr(
+            chat_completion.usage.input_tokens_details, "cached_tokens"
+        ):
+            cached_tokens = chat_completion.usage.input_tokens_details.cached_tokens
         else:
             cached_tokens = 0
 
+        # get completion (output) token usage, support completion_tokens as well as output_tokens (new api?)
+        if hasattr(chat_completion.usage, "completion_tokens"):
+            output_tokens = chat_completion.usage.completion_tokens
+        elif hasattr(chat_completion.usage, "output_tokens"):
+            output_tokens = chat_completion.usage.output_tokens
+        else:
+            output_tokens = 0
+
+        # support reasoning token usage
+        if hasattr(chat_completion.usage, "completion_tokens_details") and hasattr(
+            chat_completion.usage.completion_tokens_details, "reasoning_tokens"
+        ):
+            reasoning_tokens = chat_completion.usage.completion_tokens_details.reasoning_tokens
+        elif hasattr(chat_completion.usage, "output_tokens_details") and hasattr(
+            chat_completion.usage.output_tokens_details, "reasoning_tokens"
+        ):
+            reasoning_tokens = chat_completion.usage.output_tokens_details.reasoning_tokens
+        else:
+            reasoning_tokens = 0
+
         # postprocessing
         text = self.post_func(chat_completion.choices[0].message.content)
-
+        inf_time_ms = int((end_time - start_time) * 1000)
         token_usage = TokenUsage(
             cached_tokens=cached_tokens,
-            prompt_tokens=chat_completion.usage.prompt_tokens,
-            output_tokens=chat_completion.usage.completion_tokens,
+            prompt_tokens=prompt_tokens,
+            output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
             total_tokens=chat_completion.usage.total_tokens,
-            inf_time_ms=int((end_time - start_time) * 1000),
+            inf_time_ms=inf_time_ms,
         )
-
         return GenerationResult(model=self.model, text=text, tokens=token_usage)
