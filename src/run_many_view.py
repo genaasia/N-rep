@@ -1194,6 +1194,8 @@ def main():
         raise ValueError(f"predictions length ({len(predictions)}) does not match test data length ({len(test_data)})")
     with open(os.path.join(args.output_path, "predict.json"), "w") as f:
         json.dump(predictions, f, indent=2)
+    with open(os.path.join(args.output_path, "predict_dev.json"), "w") as f:
+        json.dump(predictions, f, indent=2)
     logger.info(f"predictions saved to {os.path.join(args.output_path, 'predict.json')}")
 
     # calculate final token counts
