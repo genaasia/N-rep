@@ -16,7 +16,7 @@ from text2sql.engine.generation import GenerationResult
 
 
 def verify_schema_format(schema_format: str):
-    if schema_format not in SCHEMA_FORMATS:
+    if schema_format not in SCHEMA_FORMATS + ["multi"]:
         raise ValueError(f"Invalid schema format: {schema_format}")
     return schema_format
 
