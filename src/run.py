@@ -653,6 +653,12 @@ def main():
         help="flip the order of fewshot examples",
     )
     parser.add_argument(
+        "--num-fewshot",
+        type=int,
+        default=3,
+        help="number of fewshot examples, default is 3",
+    )
+    parser.add_argument(
         "--num-workers",
         type=int,
         default=4,
@@ -721,14 +727,14 @@ def main():
         raise FileNotFoundError(f"Databases directory not found: {args.test_database_path}")
 
     # load candidate configs
-    top_k = 3  # 3 by default, can override in candidate configs
+    top_k = args.num_fewshot  # 3 by default, can override in candidate configs
     with open(args.candidate_configs_path, "r") as f:
         candidate_config_data: list[dict] = yaml.safe_load(f)
         if "configs" not in candidate_config_data:
             raise ValueError("candidate_config_data must contain a 'configs' key")
         if "top_k" in candidate_config_data:
             top_k = candidate_config_data["top_k"]
-            logger.info(f"top_k set to {top_k} from candidate_configs.yaml")
+            logger.warning(f"top_k set to {top_k} from candidate_configs.yaml, overriding command line argument")
         else:
             logger.info(f"top_k not set in candidate_configs.yaml, using default of {top_k}")
         candidate_configs: list[dict] = candidate_config_data["configs"]
@@ -1183,6 +1189,8 @@ def main():
     if len(predictions) != len(test_data):
         raise ValueError(f"predictions length ({len(predictions)}) does not match test data length ({len(test_data)})")
     with open(os.path.join(args.output_path, "predict.json"), "w") as f:
+        json.dump(predictions, f, indent=2)
+    with open(os.path.join(args.output_path, "predict_dev.json"), "w") as f:
         json.dump(predictions, f, indent=2)
     logger.info(f"predictions saved to {os.path.join(args.output_path, 'predict.json')}")
 
