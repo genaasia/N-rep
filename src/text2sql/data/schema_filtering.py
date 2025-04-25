@@ -209,7 +209,7 @@ from text2sql.data.schema_to_text import schema_to_sql_create
 
 def filter_schema_dict(column_dict: dict, filter_dict: dict) -> tuple[dict, dict]:
     """filter the dataset schema dict based on the filter dict from schema linking"""
-    filter_dict = deepcopy(filter_dict)
+    column_dict = deepcopy(column_dict)  # Make a deep copy of the input dictionary
     pop_keys = []
     pop_cols = {}
     pop_fks = {}
