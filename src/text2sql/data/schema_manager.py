@@ -13,6 +13,7 @@ from text2sql.data.schema_filtering import (
     parse_basic_format,
     parse_datagrip_format,
     parse_sql_create_from_source,
+    filter_schema_dict
 )
 
 
@@ -167,6 +168,9 @@ class SchemaManager:
             return parse_basic_format(full_schema, filter_dict, include_types, include_relations)
         elif mode == "datagrip":
             return parse_datagrip_format(full_schema, filter_dict)
+        elif mode == "json_raw":
+            filtered_schema_map = filter_schema_dict(self.schema_maps[database_name], filter_dict)
+            return json.dumps(filtered_schema_map, indent=4)
         else:
             raise ValueError(f"Unsupported mode: {mode}")
 

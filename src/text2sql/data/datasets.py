@@ -1,3 +1,4 @@
+import json
 import glob
 import os
 from uuid import UUID
@@ -34,6 +35,7 @@ SCHEMA_FORMATS = [
     "m_schema",
     "mac_schema_basic",
     "mac_schema",
+    "json_raw"
 ]
 
 
@@ -109,6 +111,9 @@ class BaseDataset(ABC):
                 column_parameters["max_examples"] = max_examples
             column_samples = get_mac_schema_column_samples(self, **column_parameters)
             return schema_to_mac_schema_format(database_name, schema, column_samples, table_descriptions)
+        elif mode =="json_raw":
+            return json.dumps(schema, indent=4)
+
 
     def validate_query(self, database_name: str, query: str, timeout_secs: int = 30) -> dict:
         """validate the query against the database schema"""
