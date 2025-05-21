@@ -1,6 +1,15 @@
-# Gena AI BIRD Submission
+# N-rep | Text-to-SQL | GENA
 
-updated April 7th, 2025
+updated May 21st, 2025
+
+<p align="center">
+  <img src="./image/pipeline_v6.png" alt="image" />
+</p>
+
+<p align="center">
+  <a href="https://arxiv.org/abs/2505.14174">📖 Arxiv</a> 
+</p>
+
 
 maintainers:
 
@@ -132,4 +141,24 @@ python evaluate.py \
 --test-database-path /data/sql_datasets/bird/dev_20240627/dev_databases \
 --test-json-path /data/sql_datasets/bird/dev_20240627/dev.json \
 --predictions-path ../results-dev/predictions.json
+```
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Citation
+
+If you find this repository helpful, please cite the paper:
+
+```bibtex
+@misc{dönder2025cheaperbetterfasterstronger,
+      title={Cheaper, Better, Faster, Stronger: Robust Text-to-SQL without Chain-of-Thought or Fine-Tuning}, 
+      author={Yusuf Denizay Dönder and Derek Hommel and Andrea W Wen-Yi and David Mimno and Unso Eun Seo Jo},
+      year={2025},
+      eprint={2505.14174},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2505.14174}, 
+}
 ```
