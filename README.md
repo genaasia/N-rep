@@ -143,9 +143,13 @@ python evaluate.py \
 --predictions-path ../results-dev/predictions.json
 ```
 
+you can use the predictions.json with BIRD benchmark's [evaluation code](https://github.com/AlibabaResearch/DAMO-ConvAI/blob/main/bird/llm/src/evaluation.py) to replicate evaluation results exactly.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+This project uses examples from the BIRD train set (licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)).
 
 ## Citation
 
