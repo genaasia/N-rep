@@ -3,10 +3,14 @@ import concurrent.futures
 import json
 import multiprocessing
 import os
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
+
+# Add src directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numpy as np
 import spacy
