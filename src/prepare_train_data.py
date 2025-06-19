@@ -124,7 +124,7 @@ def get_filtered_schema_txt(
         Dictionary containing schema text in different formats
     """
 
-    sql_create_text = schema_manager.get_filtered_schema(db_id, table_map, "sql")
+    sql_create_text = schema_manager.get_filtered_schema(db_id, table_map, "sql_create")
     m_schema_text = schema_manager.get_filtered_schema(db_id, table_map, "m_schema")
     mac_schema_text = schema_manager.get_filtered_schema(db_id, table_map, "mac_schema")
 
@@ -403,7 +403,7 @@ def process_queries(args) -> None:
     print(f"generating train embeddings and saving to '{embedding_path}'")
     masked_questions = [item["question_masked"] for item in valid_multi_table_queries]
     train_embedding_response: EmbeddingResult = embedder.embed(masked_questions, verbose=True)
-    train_embeddings = train_embedding_response.embedding
+    train_embeddings = train_embedding_response.embeddings
     assert len(train_embeddings) == len(masked_questions)
     np.save(embedding_path, train_embeddings)
 
