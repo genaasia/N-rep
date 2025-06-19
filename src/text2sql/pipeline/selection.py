@@ -272,7 +272,7 @@ def select_best_candidate(
     question: str | None = None,
     evidence: str | None = None,
     generator: BaseGenerator | None = None,
-) -> Tuple[str, list[GenerationResult]]:
+) -> Tuple[str, list[GenerationResult], int, int]:
     """
     Select the best prediction based on voting.
 
@@ -316,23 +316,24 @@ def select_best_candidate(
 
     if not predicted_valids:
         if len(predictions) > 0:
-            return predictions[0]["sql"], []
+            return predictions[0]["sql"], [], 0, 0
         else:
-            return "SELECT 1", []
+            return "SELECT 1", [], 0, 0
 
     prediction_votes = get_votes(predicted_valids)
     max_vote_sql, values = max(prediction_votes.items(), key=lambda x: x[1]["vote_count"])
 
     if not chase:
-        return max_vote_sql, []
+        return max_vote_sql, [], values["vote_count"], 0
 
-    max_vote = values["vote_count"]
+    max_vote_regular = values["vote_count"]
+    max_vote_chase = 0
 
     # Determine if chase voting is needed
     should_chase = (
-        max_vote == 1
-        or (max_vote == 2 and sum([True for val in prediction_votes.values() if val["vote_count"] == 2]) > 1)
-        or (max_vote == 3 and sum([True for val in prediction_votes.values() if val["vote_count"] == 2]) >= 1)
+        max_vote_regular == 1
+        or (max_vote_regular == 2 and sum([True for val in prediction_votes.values() if val["vote_count"] == 2]) > 1)
+        or (max_vote_regular == 3 and sum([True for val in prediction_votes.values() if val["vote_count"] == 2]) >= 1)
     )
 
     if should_chase:
@@ -347,11 +348,11 @@ def select_best_candidate(
 
         # Handle empty chase_votes
         if not chase_votes:
-            return max_vote_sql, chase_generations
+            return max_vote_sql, chase_generations, max_vote_regular, max_vote_chase
 
-        chase_idx, _chase_max_vote = max(chase_votes.items(), key=lambda x: x[1])
+        chase_idx, max_vote_chase = max(chase_votes.items(), key=lambda x: x[1])
         chase_sql = predicted_valids[chase_idx]["sql"]
 
-        return chase_sql, chase_generations
+        return chase_sql, chase_generations, max_vote_regular, max_vote_chase
     else:
-        return max_vote_sql, []
+        return max_vote_sql, [], max_vote_regular, max_vote_chase

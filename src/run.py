@@ -90,6 +90,8 @@ class CandidateSelection(BaseModel):
     candidate_config: dict
     selected_idx: int
     selected_sql: str
+    max_vote_regular: int
+    max_vote_chase: int
 
 
 def update_moving_average(current_avg, n, new_sample):
@@ -566,7 +568,7 @@ def run_candidate_selection(
             }
         )
     # run selection
-    best_sql, chase_generations = select_best_candidate(
+    best_sql, chase_generations, max_vote_regular, max_vote_chase = select_best_candidate(
         predictions=sample_dicts,
         schema_manager=schema_manager,
         db_id=database,
@@ -586,6 +588,8 @@ def run_candidate_selection(
         candidate_config=candidate_configs[sql_index],
         selected_idx=sql_index,
         selected_sql=best_sql,
+        max_vote_regular=max_vote_regular,
+        max_vote_chase=max_vote_chase,
     )
 
 
