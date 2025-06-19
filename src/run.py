@@ -861,8 +861,9 @@ def main():
                 for idx, sample in enumerate(test_data)
                 if sample["question_id"] in missing_question_ids
             ]
-            for question_id, future in tqdm.tqdm(zip(missing_question_ids, futures), total=len(missing_question_ids)):
+            for _, future in tqdm.tqdm(zip(missing_question_ids, futures), total=len(missing_question_ids)):
                 predicted_schema_linking_outputs: list[SchemaLinkingInfo] = future.result()
+                question_id = predicted_schema_linking_outputs[0].question_id
                 for output in predicted_schema_linking_outputs:
                     model_name = output.model_name
                     f_model_name = model_name.replace("_", "").replace(" ", "")
