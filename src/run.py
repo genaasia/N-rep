@@ -1,4 +1,3 @@
-import argparse
 import copy
 import json
 import os
@@ -6,7 +5,7 @@ import sys
 
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.pool import ThreadPool
-from typing import Annotated, Literal
+from typing import Literal
 
 import numpy as np
 import tqdm
@@ -14,7 +13,6 @@ import yaml
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import AfterValidator, BaseModel
 
 from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
 
@@ -22,7 +20,7 @@ from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
 from text2sql.data.datasets import SCHEMA_FORMATS
 from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder, EmbeddingResult
-from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator, GenerationResult, TokenUsage
+from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator, GenerationResult
 from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
 from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
 from text2sql.engine.prompts.formatters import RewritePromptFormatter
@@ -30,95 +28,10 @@ from text2sql.engine.retrieval import LocalRetriever
 from text2sql.engine.generation.postprocessing import extract_first_code_block
 from text2sql.utils.postprocess import get_table_names_from_query
 from text2sql.utils import parse_json_from_prediction
-
 from text2sql.pipeline.selection import select_best_candidate
 
-
-def verify_schema_format(schema_format: str):
-    if schema_format not in SCHEMA_FORMATS:
-        raise ValueError(f"Invalid schema format: {schema_format}")
-    return schema_format
-
-
-class SchemaLinkingInfo(BaseModel):
-    question_id: int
-    model_name: str
-    schema_format: Annotated[str, AfterValidator(verify_schema_format)]
-    messages: list[dict]
-    generator_output: GenerationResult
-    prediction: str
-    table_linking: dict | None
-    column_linking: dict | None
-    table_description: str
-    column_description: str
-    full_description: str
-
-
-class RewriteInfo(BaseModel):
-    question_id: int
-    original_sql: str
-    rewritten_sql: str
-    is_rewritten: bool  # whether the candidate was rewritten successfully (even if rewritten sql is same)
-    messages: list[dict]
-    generator_output: GenerationResult | None
-
-
-class Candidate(BaseModel):
-    question_id: int
-    config_index: int
-    sample: dict
-    schema_format: Annotated[str, AfterValidator(verify_schema_format)]
-    schema_filtering: Literal["none", "table", "column"]
-    messages: list[dict]
-    generator_output: GenerationResult
-    original_sql: str  # first generation parsed result
-    candidate_sql: str  # final candidate sql after rewrite
-    rewrite_checked: bool = False
-    rewrite_info: list[RewriteInfo] = []
-
-
-class CandidateList(BaseModel):
-    question_id: int
-    candidate_configs: list[dict]
-    candidates: list[Candidate]
-
-
-class CandidateSelection(BaseModel):
-    question_id: int
-    db_id: str  # for formatting output
-    generator_outputs: list[GenerationResult] = []
-    candidate_config: dict
-    selected_idx: int
-    selected_sql: str
-    max_vote_regular: int
-    max_vote_chase: int
-
-
-def update_moving_average(current_avg, n, new_sample):
-    return (current_avg * n + new_sample) / (n + 1)
-
-
-class TotalTokenUsage(BaseModel):
-    label: str = ""
-    calls: int = 0
-    avg_inf_time_ms: float = 0
-    tokens: TokenUsage = TokenUsage(prompt_tokens=0, output_tokens=0, total_tokens=0, inf_time_ms=0)
-
-    # allow adding to TokenUsage. add to internal tokens TokenUsage and increment calls by one
-    def __add__(self, other: TokenUsage) -> "TotalTokenUsage":
-        self.tokens += other
-        self.calls += 1
-        self.avg_inf_time_ms = update_moving_average(self.avg_inf_time_ms, self.calls, other.inf_time_ms)
-        return self
-
-
-class TokenReport(BaseModel):
-    total: TotalTokenUsage
-    schema_linking: dict[str, TotalTokenUsage]
-    sql_generation: TotalTokenUsage
-    sql_generation_rewrite: TotalTokenUsage
-    candidate_selection: TotalTokenUsage
-    embedding: dict
+from args import parse_args
+from models import SchemaLinkingInfo, Candidate, CandidateList, CandidateSelection, RewriteInfo, TotalTokenUsage, TokenReport
 
 
 def prepare_dataset_information(
@@ -594,83 +507,7 @@ def run_candidate_selection(
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--test-database-path",
-        type=str,
-        required=True,
-        help="path to the test databases base directory",
-    )
-    parser.add_argument(
-        "--test-json-path",
-        type=str,
-        required=True,
-        help="path to the test.json file",
-    )
-    parser.add_argument(
-        "--test-tables-json-path",
-        type=str,
-        required=True,
-        help="path to the test_tables.json file",
-    )
-    parser.add_argument(
-        "--embeddings-path",
-        type=str,
-        default="./bird_data/valid_multi_table_queries_embeddings.npy",
-        help="path to preprocessed numpy embeddings file",
-    )
-    parser.add_argument(
-        "--embeddings-data-path",
-        type=str,
-        default="./bird_data/valid_multi_table_queries.json",
-        help="path to preprocessed json embeddings data file",
-    )
-    parser.add_argument(
-        "--output-path",
-        type=str,
-        required=True,
-        default="../outputs",
-        help="target output path",
-    )
-    parser.add_argument(
-        "--candidate-configs-path",
-        type=str,
-        default="./bird_data/consistency_candidate_configs.yaml",
-        help="path to the candidate configs file",
-    )
-    parser.add_argument(
-        "--column-meaning-json-path",
-        type=str,
-        default=None,
-        help="path to the column_meaning.json file, leave blank if not used",
-    )
-    parser.add_argument(
-        "--debug",
-        type=int,
-        default=None,
-        help="run in debug mode (do small subset of data, default is None)",
-    )
-    parser.add_argument(
-        "--num-workers",
-        type=int,
-        default=4,
-        help="number of workers to use for inference, default is 4",
-    )
-    # make it a boolean
-    parser.add_argument(
-        "--save-messages",
-        action="store_true",
-        default=False,
-        help="save messages to separate files for debugging",
-    )
-    # skip test boolean
-    parser.add_argument(
-        "--skip-test",
-        action="store_true",
-        default=False,
-        help="skip llm test",
-    )
-    args = parser.parse_args()
+    args = parse_args()
 
     load_dotenv()
     # verify environment variables are set
