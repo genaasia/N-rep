@@ -30,6 +30,7 @@ from text2sql.utils.postprocess import get_table_names_from_query
 from text2sql.utils import parse_json_from_prediction
 from text2sql.pipeline.selection import select_best_candidate
 
+from argparse import Namespace
 from args import parse_args
 from models import SchemaLinkingInfo, Candidate, CandidateList, CandidateSelection, RewriteInfo, TotalTokenUsage, TokenReport
 
@@ -506,12 +507,27 @@ def run_candidate_selection(
     )
 
 
-def main():
-    args = parse_args()
+def test_generators():
+    """ verify generators are working """
+    test_messages = [{"role": "user", "content": "What is the capital of South Korea? Answer in one word."}]
+    test_azure_generator = AzureGenerator(
+        model=os.getenv("AZURE_OPENAI_MODEL"),
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_OPENAI_API_ENDPOINT"),
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    )
+    test_gcp_generator = GCPGenerator(
+        model="gemini-1.5-flash",
+        api_key=os.getenv("GCP_KEY"),
+    )
+    p = test_azure_generator.generate(test_messages, temperature=0.0)
+    logger.info(f"Azure generator test response: '{p}'")
+    p = test_gcp_generator.generate(test_messages, temperature=0.0)
+    logger.info(f"Gemini generator test response: '{p}'")
 
-    load_dotenv()
-    # verify environment variables are set
-    logger.info("Validating environment variables...")
+
+def verify_env_vars():
+    """ verify environment variables are set """
     if os.getenv("AZURE_OPENAI_API_KEY") is None:
         raise ValueError("AZURE_OPENAI_API_KEY is not set")
     if os.getenv("AZURE_OPENAI_API_ENDPOINT") is None:
@@ -527,8 +543,9 @@ def main():
     if os.getenv("AWS_SECRET_ACCESS_KEY") is None:
         raise ValueError("AWS_SECRET_ACCESS_KEY is not set")
 
-    logger.info("Validating input files...")
-    # validate all required json files exist
+
+def verify_required_files(args: Namespace):
+    """ verify required files exist """
     for path in [
         args.test_json_path,
         args.test_tables_json_path,
@@ -555,9 +572,11 @@ def main():
     if not os.path.isdir(args.test_database_path):
         raise FileNotFoundError(f"Databases directory not found: {args.test_database_path}")
 
-    # load candidate configs
+
+def load_candidate_configs(candidate_configs_path: str) -> tuple[list[dict], int]:
+    """ load candidate configs from yaml file """
     top_k = 3  # 3 by default, can override in candidate configs
-    with open(args.candidate_configs_path, "r") as f:
+    with open(candidate_configs_path, "r") as f:
         candidate_config_data: list[dict] = yaml.safe_load(f)
         if "configs" not in candidate_config_data:
             raise ValueError("candidate_config_data must contain a 'configs' key")
@@ -574,25 +593,46 @@ def main():
         assert "generator" in config
         assert "model" in config
         assert config["schema_format"] in SCHEMA_FORMATS
+    
+    return candidate_configs, top_k
 
-    # if output path does not exist, create it
-    if not os.path.isdir(args.output_path):
-        logger.info(f"Output directory not found, creating it: {args.output_path}")
-        os.makedirs(args.output_path)
+
+def create_output_dir(output_path, candidate_configs):
+    """ create output directory and save copy of candidate configs """
+    if not os.path.isdir(output_path):
+        logger.info(f"Output directory not found, creating it: {output_path}")
+        os.makedirs(output_path)
         # save copy of candidate configs, to confirm against when loading
-        with open(os.path.join(args.output_path, "experiment_candidate_configs.yaml"), "w") as f:
+        with open(os.path.join(output_path, "experiment_candidate_configs.yaml"), "w") as f:
             yaml.dump(candidate_configs, f)
     else:
-        logger.info(f"Output directory found, existing outputs will be overwritten: {args.output_path}")
+        logger.info(f"Output directory found, existing outputs will be overwritten: {output_path}")
         # check if candidate configs match
-        if not os.path.isfile(os.path.join(args.output_path, "experiment_candidate_configs.yaml")):
+        if not os.path.isfile(os.path.join(output_path, "experiment_candidate_configs.yaml")):
             raise FileNotFoundError("copy of experiment_candidate_configs.yaml not found in output directory")
-        with open(os.path.join(args.output_path, "experiment_candidate_configs.yaml"), "r") as f:
+        with open(os.path.join(output_path, "experiment_candidate_configs.yaml"), "r") as f:
             candidate_configs_copy: list[dict] = yaml.safe_load(f)
             if candidate_configs != candidate_configs_copy:
                 raise ValueError("candidate_configs mismatch! must have same configs for restoring data")
 
-    # load test.json
+
+def main():
+    args = parse_args()
+
+    load_dotenv()
+
+    logger.info("Validating environment variables...")
+    verify_env_vars()
+
+    logger.info("Validating input files...")
+    verify_required_files(args)
+
+    logger.info("Loading candidate configs...")
+    candidate_configs, top_k = load_candidate_configs(args.candidate_configs_path)
+
+    logger.info("Creating output directory...")
+    create_output_dir(args.output_path, candidate_configs)
+
     logger.info("Loading test data...")
     with open(args.test_json_path, "r") as f:
         test_data: list[dict] = json.load(f)
@@ -615,14 +655,6 @@ def main():
     )
 
     logger.info("Creating generators...")
-    test_messages = [{"role": "user", "content": "What is the capital of South Korea? Answer in one word."}]
-
-    test_azure_generator = AzureGenerator(
-        model=os.getenv("AZURE_OPENAI_MODEL"),
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        azure_endpoint=os.getenv("AZURE_OPENAI_API_ENDPOINT"),
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-    )
     gcp_generator_candidate = GCPGenerator(
         model="gemini-1.5-flash",
         api_key=os.getenv("GCP_KEY"),
@@ -633,10 +665,8 @@ def main():
     )
 
     if not args.skip_test:
-        p = test_azure_generator.generate(test_messages, temperature=0.0)
-        logger.info(f"Azure generator test response: '{p}'")
-        p = gcp_generator_candidate.generate(test_messages, temperature=0.0)
-        logger.info(f"Gemini generator test response: '{p}'")
+        logger.info("Verifying generators are working...")
+        test_generators()
 
     #############################
     # preprocessing
