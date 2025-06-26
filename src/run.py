@@ -18,6 +18,7 @@ from cache_loaders import (
     load_embedding_results,
     load_fewshot_retrieval_results,
     load_schema_linking_results,
+    load_agentic_rewrite_results,
 )
 from models import Candidate, CandidateList, CandidateSelection, RewriteInfo, SchemaLinkingInfo
 from pipe_init_steps import (
@@ -45,6 +46,7 @@ from text2sql.pipeline.selection import select_best_candidate
 from text2sql.utils import parse_json_from_prediction
 from text2sql.utils.postprocess import get_table_names_from_query
 
+from agent import AgenticRewrite
 
 def run_embedding(
     embedder: BaseEmbedder,
@@ -430,14 +432,7 @@ def run_candidate_selection(
     database: str = candidates[0].sample["db_id"]
     question: str = candidates[0].sample["question"]
     evidence: str = candidates[0].sample.get("evidence", "")
-    if len(candidates) == 1:
-        return CandidateSelection(
-            question_id=candidates[0].question_id,
-            db_id=database,
-            candidate_config=candidate_configs[0],
-            selected_idx=0,
-            selected_sql=candidates[0].candidate_sql,
-        )
+
     sample_dicts: list[dict] = []
     for candidate in candidates:
         sql_query = candidate.candidate_sql
@@ -452,6 +447,22 @@ def run_candidate_selection(
                 "results": execution_results,
             }
         )
+    
+    if len(candidates) == 1:
+        needs_agentic_rewrite = check_need_rewrite(sample_dicts[0]["results"])
+        if needs_agentic_rewrite:
+            print(f"NEEDING SINGLE candidate agentic rewrite for question {question_id}")
+
+        return CandidateSelection(
+            question_id=candidates[0].question_id,
+            question=question,
+            db_id=database,
+            candidate_config=candidate_configs[0],
+            selected_idx=0,
+            selected_sql=candidates[0].candidate_sql,
+            needs_agentic_rewrite=needs_agentic_rewrite,
+        )
+
     # run selection
     best_sql, chase_generations, max_vote_regular, max_vote_chase = select_best_candidate(
         predictions=sample_dicts,
@@ -465,9 +476,16 @@ def run_candidate_selection(
     # get the (first) index of the best sql
     sqls = [candidate.candidate_sql for candidate in candidates]
     sql_index = sqls.index(best_sql)
+    # get the execution result from the sample dict
+    sql_execution_results = sample_dicts[sql_index]["results"]
+    assert sample_dicts[sql_index]["sql"] == best_sql
+    needs_agentic_rewrite = check_need_rewrite(sql_execution_results)
+    if needs_agentic_rewrite:
+        print(f"NEEDING agentic rewrite for question {question_id}")
 
     return CandidateSelection(
         question_id=question_id,
+        question=question,
         db_id=database,
         generator_outputs=chase_generations,
         candidate_config=candidate_configs[sql_index],
@@ -475,6 +493,7 @@ def run_candidate_selection(
         selected_sql=best_sql,
         max_vote_regular=max_vote_regular,
         max_vote_chase=max_vote_chase,
+        needs_agentic_rewrite=needs_agentic_rewrite,
     )
 
 
@@ -822,6 +841,22 @@ def main():
 
     logger.info("Candidate selection complete")
 
+
+    agentic_rewrite_output_dir = os.path.join(args.output_path, "6_agentic_rewrite")
+    os.makedirs(agentic_rewrite_output_dir, exist_ok=True)
+    agentic_rewrite_results, missing_samples = load_agentic_rewrite_results(agentic_rewrite_output_dir, test_data)
+
+    agent = AgenticRewrite(schema_manager, dataset)
+    for question_id, candidate_selection in candidate_selections.items():
+        if candidate_selection.max_vote_regular in [0, 1, 2]:
+            candidate_selection.needs_agentic_rewrite = True
+        if candidate_selection.needs_agentic_rewrite and question_id not in agentic_rewrite_results:
+            print(f"Running agentic rewrite for question {question_id}")
+            agentic_rewrite_results[question_id] = agent.process_row(candidate_selection)
+            with open(os.path.join(agentic_rewrite_output_dir, f"agentic_rewrite_qid-{question_id:04d}.json"), "w") as f:
+                f.write(agentic_rewrite_results[question_id].model_dump_json(indent=2))
+
+
     #############################
     # output saving
     #############################
@@ -830,6 +865,7 @@ def main():
         embedding_results,
         sql_candidate_lists,
         candidate_selections,
+        agentic_rewrite_results,
         test_data,
         args.output_path,
     )

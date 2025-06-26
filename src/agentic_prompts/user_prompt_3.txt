@@ -1,0 +1,33 @@
+The final SQL query you wrote returned an empty result.
+
+This is not expected — the benchmark assumes there is always at least one matching result. That means there may be an issue with your query, such as:
+- Incorrect filters or unmatched values
+- Invalid or overly strict join conditions
+- Misinterpretation of schema relationships
+
+---
+
+Please reflect on your prior reasoning, the final SQL you generated, and the result of `[]`. Then write **a new Chain of Thought** explaining what may have gone wrong and what you plan to check next.
+
+After that, write a new set of **exploratory SQL queries** to investigate or correct your assumptions. These can:
+- Probe for join mismatches
+- Relax or verify filter values using `LIKE`
+- Explore column contents and distributions again
+- Debug foreign key relations and join paths
+
+Output your response in this order:
+1. Your updated reasoning
+2. A **JSON array** of exploratory queries in the same format as before, inside a `json` code block.
+
+Final SQL must return at least one result — ensure your filter values and joins are valid and tested.
+
+Do not write a new final SQL query yet — that will come next.
+
+Schema:
+{SCHEMA}
+
+All table names, column names, and their exact casing in your SQL queries MUST strictly adhere to the provided `Schema`. Do not infer or use any table or column names not explicitly listed in the `Schema`.
+Pay close attention to column names that contain spaces or special characters; they must be correctly quoted (e.g., using backticks or double quotes as indicated by the schema definition).
+
+Question:
+{QUESTION}
