@@ -8,7 +8,7 @@ from text2sql.engine.generation.postprocessing import extract_first_code_block
 from models import CandidateSelection, AgenticRewriteResult
 
 
-TEMPERATURE = 0.1
+TEMPERATURE = 0
 MESSAGES_DIR = "./agentic_messages"
 
 

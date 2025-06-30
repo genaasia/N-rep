@@ -848,7 +848,7 @@ def main():
 
     agent = AgenticRewrite(schema_manager, dataset)
     for question_id, candidate_selection in candidate_selections.items():
-        if candidate_selection.max_vote_regular in [0, 1, 2]:
+        if candidate_selection.max_vote_regular in [0, 1]:
             candidate_selection.needs_agentic_rewrite = True
         if candidate_selection.needs_agentic_rewrite and question_id not in agentic_rewrite_results:
             print(f"Running agentic rewrite for question {question_id}")
