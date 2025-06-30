@@ -69,6 +69,7 @@ class BaseDataset(ABC):
         database_name: str,
         mode: str = "basic",
         table_descriptions: dict | None = None,
+        column_meaning: dict | None = None,
         max_examples: int | None = None,
     ) -> str:
         """return a string representation of the database schema"""
@@ -86,7 +87,10 @@ class BaseDataset(ABC):
         if mode == "basic_types_relations":
             return schema_to_basic_format(database_name, schema, include_types=True, include_relations=True)
         elif mode == "sql_create":
-            return schema_to_sql_create(database_name, schema)
+            if column_meaning is not None:
+                return schema_to_sql_create(database_name, schema, column_meaning=column_meaning[database_name])
+            else:
+                return schema_to_sql_create(database_name, schema)
         elif mode == "datagrip":
             return schema_to_datagrip_format(database_name, schema)
         elif mode == "m_schema":
@@ -94,7 +98,11 @@ class BaseDataset(ABC):
             if max_examples is not None:
                 column_parameters["max_examples"] = max_examples
             column_samples = get_m_schema_column_samples(self, **column_parameters)
-            return schema_to_m_schema_format(database_name, schema, column_samples)
+            # give column_meaning to the schema_to_m_schema_format function only if it is not None
+            if column_meaning is not None:
+                return schema_to_m_schema_format(database_name, schema, column_samples, column_meaning=column_meaning[database_name])
+            else:
+                return schema_to_m_schema_format(database_name, schema, column_samples)
         elif mode == "mac_schema_basic":
             if table_descriptions is not None:
                 raise ValueError("table_descriptions should be None for mac_schema_basic mode")
@@ -110,7 +118,10 @@ class BaseDataset(ABC):
             if max_examples is not None:
                 column_parameters["max_examples"] = max_examples
             column_samples = get_mac_schema_column_samples(self, **column_parameters)
-            return schema_to_mac_schema_format(database_name, schema, column_samples, table_descriptions)
+            if column_meaning is not None:
+                return schema_to_mac_schema_format(database_name, schema, column_samples, table_descriptions, column_meaning[database_name])
+            else:
+                return schema_to_mac_schema_format(database_name, schema, column_samples, table_descriptions)
         elif mode =="json_raw":
             return json.dumps(schema, indent=4)
 

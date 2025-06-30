@@ -551,7 +551,7 @@ def main():
     #############################
     # preprocessing
     #############################
-    dataset, schema_manager = prepare_dataset_information(args.test_database_path, args.test_tables_json_path)
+    dataset, schema_manager = prepare_dataset_information(args.test_database_path, args.test_tables_json_path, args.column_meaning_json_path)
     retriever = prepare_fewshot_retriever(args.embeddings_path, args.embeddings_data_path)
 
     logger.info("Preprocessing complete, starting inference...")
@@ -573,7 +573,7 @@ def main():
     # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
     os.makedirs(schema_linking_output_dir, exist_ok=True)
-    schema_linking_results, missing_question_ids = load_schema_linking_results(schema_linking_output_dir, test_data)
+    schema_linking_results, missing_question_ids = load_schema_linking_results(schema_linking_output_dir, test_data, schema_manager)
 
     if len(missing_question_ids) > 0:
         logger.info(f"Running schema linking for {len(missing_question_ids)} samples")

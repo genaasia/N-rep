@@ -1,7 +1,6 @@
 from typing import Any, Dict, List, Optional
 
 
-
 def schema_to_basic_format(
     database_name: str, schema: dict[str, Any], include_types: bool = False, include_relations: bool = False
 ) -> str:
@@ -37,7 +36,7 @@ def schema_to_basic_format(
     return "\n".join(output)
 
 
-def schema_to_sql_create(database_name: str, schema: dict[str, Any]) -> str:
+def schema_to_sql_create(database_name: str, schema: dict[str, Any], column_meaning: Optional[dict] = None) -> str:
     """represent schema as an SQL CREATE query statement (following DAIL-SQL)"""
     output = [f"{database_name} CREATE messages:\n"]
 
@@ -49,13 +48,18 @@ def schema_to_sql_create(database_name: str, schema: dict[str, Any]) -> str:
         # Columns
         for col_name, col_type in table_info["columns"].items():
             col_name = str(col_name)  # Convert to string in case it's an integer
-            column_definitions.append(f"    {col_name} {col_type}")
 
+            if column_meaning and col_name in column_meaning[table_name]:
+                column_definitions.append(f"    {col_name} {col_type} -- {column_meaning[table_name][col_name]}")
+            else:
+                column_definitions.append(f"    {col_name} {col_type}")
+
+            
         # Primary Key
         if "keys" in table_info and table_info["keys"].get("primary_key"):
             pk_columns = ", ".join(str(col) for col in table_info["keys"]["primary_key"])
             constraints.append(f"    PRIMARY KEY ({pk_columns})")
-
+        
         # Foreign Keys
         if "foreign_keys" in table_info:
             for fk_column, fk_info in table_info["foreign_keys"].items():
@@ -73,7 +77,7 @@ def schema_to_sql_create(database_name: str, schema: dict[str, Any]) -> str:
         # Join all lines of the CREATE TABLE statement
         output.append("\n".join(create_statement))
         output.append("")  # Add an empty line between tables
-
+    
     return "\n".join(output)
 
 
@@ -150,9 +154,28 @@ def get_m_schema_column_samples(
         for col_name, col_type in table_info["columns"].items():
             # Quote column name to handle special characters and numbers
             quoted_col = f'"{col_name}"'
+
+            # First, check the number of distinct values
+            count_query = f'SELECT COUNT(DISTINCT {quoted_col}) FROM "{table_name}"'
+            col_max_examples = max_examples
+            try:
+                count_results = dataset.query_database(database_name, count_query)
+                if count_results and isinstance(count_results[0], (list, tuple)):
+                    distinct_count = count_results[0][0]
+                elif count_results and isinstance(count_results[0], dict):
+                    # If result is a dict, get the first value
+                    distinct_count = list(count_results[0].values())[0]
+                else:
+                    distinct_count = None
+                if distinct_count is not None and distinct_count <= 20:
+                    col_max_examples = 20
+            except Exception as e:
+                print(f"Warning: Could not get distinct count for column {col_name} in table {table_name}: {str(e)}")
+                # Fallback to default max_examples
+                col_max_examples = max_examples
             
             # Create a query to get distinct sample values for this column
-            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL LIMIT {max_examples}'
+            query = f'SELECT DISTINCT {quoted_col} FROM "{table_name}" WHERE {quoted_col} IS NOT NULL LIMIT {col_max_examples}'
             
             try:
                 # Execute the query and get results
@@ -167,8 +190,8 @@ def get_m_schema_column_samples(
                 # Apply m-schema example selection rules
                 if col_samples:
                     # For date/time types, only show first example
-                    col_type = table_info["columns"][col_name].upper()
-                    if any(t in col_type for t in ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP']):
+                    col_type_upper = table_info["columns"][col_name].upper()
+                    if any(t in col_type_upper for t in ['DATE', 'TIME', 'DATETIME', 'TIMESTAMP']):
                         col_samples = [col_samples[0]]
                     else:
                         # Check for long examples
@@ -178,7 +201,7 @@ def get_m_schema_column_samples(
                         elif max_len > 20:
                             col_samples = [col_samples[0]]
                         else:
-                            col_samples = col_samples[:max_examples]
+                            col_samples = col_samples[:col_max_examples]
                 
                 # Store the samples for this column
                 samples[table_name][col_name] = col_samples
@@ -194,7 +217,8 @@ def get_m_schema_column_samples(
 def schema_to_m_schema_format(
     database_name: str,
     schema: dict[str, Any],
-    column_samples: dict[str, dict[str, list[Any]]]
+    column_samples: dict[str, dict[str, list[Any]]],
+    column_meaning: Optional[dict] = None,
 ) -> str:
     """represent schema in m-schema format (following m-schema.txt)
     
@@ -225,6 +249,9 @@ def schema_to_m_schema_format(
             if "keys" in table_info and "primary_key" in table_info["keys"]:
                 if col_name in table_info["keys"]["primary_key"]:
                     col_line += ", Primary Key"
+            
+            if column_meaning and col_name in column_meaning[table_name]:
+                col_line += f", Description: {column_meaning[table_name][col_name]}"
             
             # Add examples if available
             if table_name in column_samples and col_name in column_samples[table_name]:
@@ -316,8 +343,25 @@ def get_mac_schema_column_samples(
                 except Exception:
                     continue
             
-            # Get ALL distinct values first, sorted by frequency - EXACTLY as in agents.py
+            # Determine max_examples for this column based on number of distinct values
             quoted_col = f'"{col_name}"'
+            col_max_examples = max_examples
+            count_query = f'SELECT COUNT(DISTINCT {quoted_col}) FROM "{table_name}"'
+            try:
+                count_results = dataset.query_database(database_name, count_query)
+                if count_results and isinstance(count_results[0], (list, tuple)):
+                    distinct_count = count_results[0][0]
+                elif count_results and isinstance(count_results[0], dict):
+                    distinct_count = list(count_results[0].values())[0]
+                else:
+                    distinct_count = None
+                if distinct_count is not None and distinct_count <= 20:
+                    col_max_examples = 20
+            except Exception as e:
+                print(f"Warning: Could not get distinct count for column {col_name} in table {table_name}: {str(e)}")
+                col_max_examples = max_examples
+            
+            # Get ALL distinct values first, sorted by frequency - EXACTLY as in agents.py
             query = f'SELECT {quoted_col} FROM "{table_name}" GROUP BY {quoted_col} ORDER BY COUNT(*) DESC'
             
             try:
@@ -350,9 +394,9 @@ def get_mac_schema_column_samples(
                     
                     # Store the samples if we have any
                     if col_samples:
-                        # Only take up to max_examples after all filtering
-                        samples[table_name][col_name] = col_samples[:max_examples]
-                    
+                        # Only take up to col_max_examples after all filtering
+                        samples[table_name][col_name] = col_samples[:col_max_examples]
+                
             except Exception as e:
                 print(f"Warning: Could not get samples for column {col_name} in table {table_name}: {str(e)}")
     
@@ -363,7 +407,8 @@ def schema_to_mac_schema_format(
     database_name: str,
     schema: dict[str, Any],
     column_samples: dict[str, dict[str, list[Any]]],
-    table_descriptions: Optional[dict] = None
+    table_descriptions: Optional[dict] = None,
+    column_meaning: Optional[dict] = None,
 ) -> str:
     """represent schema in mac-schema format (following mac-schema.txt)
     
@@ -374,7 +419,7 @@ def schema_to_mac_schema_format(
         table_descriptions: Optional dictionary containing table and column descriptions
     """
     output = []
-    
+
     # Process each table
     for table_name, table_info in schema["tables"].items():
         # Add table header
@@ -401,6 +446,9 @@ def schema_to_mac_schema_format(
                 
                 if col_desc:
                     col_line += f" {col_desc}."
+
+            if column_meaning and col_name in column_meaning[table_name]:
+                col_line += f" {column_meaning[table_name][col_name]}"
             
             # Add examples if available
             if table_name in column_samples and col_name in column_samples[table_name]:

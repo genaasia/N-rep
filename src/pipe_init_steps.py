@@ -13,7 +13,7 @@ from text2sql.engine.retrieval import LocalRetriever
 
 
 def prepare_dataset_information(
-    test_database_path: str, table_descriptions_path: str | None
+    test_database_path: str, table_descriptions_path: str | None, column_meaning_path: str | None
 ) -> tuple[SqliteDataset, SchemaManager]:
     """create a database loader and generate the schema descriptions
 
@@ -27,7 +27,7 @@ def prepare_dataset_information(
     logger.info(f"Loading dataset from {test_database_path}...")
     dataset = SqliteDataset(test_database_path)
     logger.info("Creating schema manager and generating schema descriptions, this may takes some time...")
-    schema_manager = SchemaManager(dataset, table_descriptions_path=table_descriptions_path)
+    schema_manager = SchemaManager(dataset, table_descriptions_path=table_descriptions_path, column_meaning_path=column_meaning_path)
     return dataset, schema_manager
 
 
