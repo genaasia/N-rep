@@ -23,8 +23,7 @@ Final SQL must return at least one result — ensure your filter values and join
 
 Do not write a new final SQL query yet — that will come next.
 
-Schema:
-{SCHEMA}
+Refer to the schema in the first user message.
 
 All table names, column names, and their exact casing in your SQL queries MUST strictly adhere to the provided `Schema`. Do not infer or use any table or column names not explicitly listed in the `Schema`.
 Pay close attention to column names that contain spaces or special characters; they must be correctly quoted (e.g., using backticks or double quotes as indicated by the schema definition).
