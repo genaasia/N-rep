@@ -12,6 +12,7 @@ def save_predictions(
     embedding_results: dict,
     sql_candidate_lists: dict,
     candidate_selections: dict,
+    agentic_rewrite_results: dict,
     test_data: list[dict],
     output_path: str,
 ):
@@ -20,9 +21,13 @@ def save_predictions(
     # get ordered question ids
     ordered_question_ids = sorted(list(candidate_selections.keys()))
     for question_id in ordered_question_ids:
-        selection: CandidateSelection = candidate_selections[question_id]
-        db_id = selection.db_id
-        prediction = selection.selected_sql
+        if question_id in agentic_rewrite_results and agentic_rewrite_results[question_id].rewritten_sql != "PARSING_FAILED":
+            prediction = agentic_rewrite_results[question_id].rewritten_sql
+            db_id = agentic_rewrite_results[question_id].db_id
+        else:
+            selection: CandidateSelection = candidate_selections[question_id]
+            db_id = selection.db_id
+            prediction = selection.selected_sql
         predictions[str(question_id)] = prediction + f"\t----- bird -----\t{db_id}"
     if len(predictions) != len(test_data):
         raise ValueError(f"predictions length ({len(predictions)}) does not match test data length ({len(test_data)})")

@@ -852,7 +852,10 @@ def main():
             candidate_selection.needs_agentic_rewrite = True
         if candidate_selection.needs_agentic_rewrite and question_id not in agentic_rewrite_results:
             print(f"Running agentic rewrite for question {question_id}")
-            agentic_rewrite_results[question_id] = agent.process_row(candidate_selection)
+            agentic_rewrite_result = agent.process_row(candidate_selection)
+            if agentic_rewrite_result.rewritten_sql == "PARSING_FAILED":
+                continue
+            agentic_rewrite_results[question_id] = agentic_rewrite_result
             with open(os.path.join(agentic_rewrite_output_dir, f"agentic_rewrite_qid-{question_id:04d}.json"), "w") as f:
                 f.write(agentic_rewrite_results[question_id].model_dump_json(indent=2))
 

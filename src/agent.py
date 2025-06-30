@@ -107,7 +107,12 @@ class AgenticRewrite:
                     txt_f.write(f"{msg['role'].upper()}:\n{msg['content']}\n\n")
                 if ass_response_1:
                     txt_f.write(f"ASSISTENT:\n{ass_response_1}\n\n")
-            return row
+            return AgenticRewriteResult(
+                question_id=idx,
+                question=question,
+                db_id=db_id,
+                rewritten_sql="PARSING_FAILED",
+            )
         for gq in response_json:
             query = gq["query"]
             result = self.dataset.validate_query(db_id, query, timeout_secs=5)
