@@ -5,10 +5,12 @@ from loguru import logger
 
 from models import Candidate, CandidateList, CandidateSelection, SchemaLinkingInfo, AgenticRewriteResult
 from text2sql.engine.embeddings import EmbeddingResult
+from text2sql.data import SchemaManager
 
 
-def load_schema_linking_results(schema_linking_output_dir, test_data):
+def load_schema_linking_results(schema_linking_output_dir, test_data, schema_manager: SchemaManager):
     test_question_ids = [sample["question_id"] for sample in test_data]
+    question_db_ids = {sample["question_id"]: sample["db_id"] for sample in test_data}
     schema_linking_results: dict = {}
     for file in sorted(os.listdir(schema_linking_output_dir)):
         if file.startswith("schema-linking_") and file.endswith(".json"):
@@ -23,6 +25,15 @@ def load_schema_linking_results(schema_linking_output_dir, test_data):
                         schema_linking_results[question_id] = {}
                     if model_name not in schema_linking_results[question_id]:
                         schema_linking_results[question_id][model_name] = {}
+
+                    column_description = schema_manager.get_filtered_schema(question_db_ids[question_id], schema_linking_output.column_linking, schema_format)
+                    table_description = schema_manager.get_filtered_schema(question_db_ids[question_id], schema_linking_output.table_linking, schema_format)
+                    full_description = schema_manager.get_full_schema(question_db_ids[question_id], schema_format)
+
+                    schema_linking_output.column_description = column_description
+                    schema_linking_output.table_description = table_description
+                    schema_linking_output.full_description = full_description
+
                     schema_linking_results[question_id][model_name][schema_format] = schema_linking_output
     logger.info(f"Loaded {len(schema_linking_results)} cached schema linking results")
     # check how many samples not in cache based on question_id
