@@ -70,6 +70,13 @@ class CandidateSelection(BaseModel):
     max_vote_chase: int
 
 
+class AgenticRewriteResult(BaseModel):
+    question_id: int
+    question: str
+    db_id: str
+    rewritten_sql: str
+
+
 class TotalTokenUsage(BaseModel):
     label: str = ""
     calls: int = 0

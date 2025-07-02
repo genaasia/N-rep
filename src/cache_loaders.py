@@ -3,7 +3,7 @@ import os
 
 from loguru import logger
 
-from models import Candidate, CandidateList, CandidateSelection, SchemaLinkingInfo
+from models import Candidate, CandidateList, CandidateSelection, SchemaLinkingInfo, AgenticRewriteResult
 from text2sql.engine.embeddings import EmbeddingResult
 
 
@@ -99,3 +99,17 @@ def load_candidate_selections(candidate_selection_output_dir, test_data):
     logger.info(f"Loaded {len(candidate_selections)} cached candidate selection results")
     missing_samples = [s for s in test_data if s["question_id"] not in candidate_selections]
     return candidate_selections, missing_samples
+
+
+def load_agentic_rewrite_results(agentic_rewrite_output_dir, test_data):
+    test_question_ids = [sample["question_id"] for sample in test_data]
+    agentic_rewrite_results: dict[int, AgenticRewriteResult] = {}
+    for file in os.listdir(agentic_rewrite_output_dir):
+        if os.path.basename(file).startswith("agentic_rewrite_qid-") and file.endswith(".json"):
+            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
+            if question_id in test_question_ids:
+                with open(os.path.join(agentic_rewrite_output_dir, file), "r") as f:
+                    agentic_rewrite_results[question_id] = AgenticRewriteResult.model_validate_json(f.read())
+    logger.info(f"Loaded {len(agentic_rewrite_results)} cached agentic rewrite results")
+    missing_samples = [sample for sample in test_data if sample["question_id"] not in agentic_rewrite_results]
+    return agentic_rewrite_results, missing_samples
