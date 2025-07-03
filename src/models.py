@@ -68,6 +68,8 @@ class CandidateSelection(BaseModel):
     selected_sql: str
     max_vote_regular: int
     max_vote_chase: int
+    needs_agentic_rewrite: bool
+    question: str
 
 
 class AgenticRewriteResult(BaseModel):
