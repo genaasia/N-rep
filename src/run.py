@@ -237,6 +237,7 @@ def run_sql_generation(
         schema_description = schema_linking_outputs.column_description
     else:
         schema_description = schema_linking_outputs.full_description
+    few_shot_examples.reverse()
     messages = message_formatter.generate_messages(
         schema_description=schema_description,
         query=sample["question"],
