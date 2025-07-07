@@ -257,7 +257,7 @@ def filter_schema_dict(column_dict: dict, filter_dict: dict) -> tuple[dict, dict
     return column_dict
 
 
-def parse_sql_create_from_source(dataset: "BaseDataset", database_name: str, filter_dict: dict[str, list[str]], force_keep_all=False) -> str:
+def parse_sql_create_from_source(dataset: "BaseDataset", database_name: str, filter_dict: dict[str, list[str]], force_keep_all=False, column_meaning_dict: dict[str, str] | None = None) -> str:
     """filter a SQL CREATE schema description text based on dictionary of table -> columns to keep"""
     schema_dict = deepcopy(dataset.get_database_schema(database_name))
     filter_dict = deepcopy(filter_dict)
@@ -265,7 +265,7 @@ def parse_sql_create_from_source(dataset: "BaseDataset", database_name: str, fil
         for key in filter_dict.keys():
             filter_dict[key] = "keep_all"
     filtered_column_dict = filter_schema_dict(schema_dict, filter_dict)
-    return schema_to_sql_create(database_name, filtered_column_dict)
+    return schema_to_sql_create(database_name, filtered_column_dict, column_meaning=column_meaning_dict)
 
 
 def parse_basic_format(text: str, filter_dict: dict[str, list[str]], include_types: bool = False, include_relations: bool = False, force_keep_all=False) -> str:

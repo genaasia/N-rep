@@ -5,6 +5,7 @@ from loguru import logger
 
 from models import Candidate, CandidateList, CandidateSelection, SchemaLinkingInfo, AgenticRewriteResult
 from text2sql.engine.embeddings import EmbeddingResult
+from text2sql.data import SchemaManager
 
 
 def load_schema_linking_results(schema_linking_output_dir, test_data):
@@ -23,6 +24,7 @@ def load_schema_linking_results(schema_linking_output_dir, test_data):
                         schema_linking_results[question_id] = {}
                     if model_name not in schema_linking_results[question_id]:
                         schema_linking_results[question_id][model_name] = {}
+
                     schema_linking_results[question_id][model_name][schema_format] = schema_linking_output
     logger.info(f"Loaded {len(schema_linking_results)} cached schema linking results")
     # check how many samples not in cache based on question_id

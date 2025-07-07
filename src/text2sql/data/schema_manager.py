@@ -2,6 +2,7 @@ import json
 
 from pathlib import Path
 from typing import Dict, List, Optional
+from loguru import logger
 
 import tqdm
 
@@ -30,6 +31,8 @@ class SchemaManager:
         dataset: BaseDataset,
         supported_modes: Optional[List[str]] = None,
         table_descriptions_path: Optional[str] = None,
+        column_meaning_dict: Optional[dict] = None,
+        lazy_load: bool = False,
     ):
         """Initialize the SchemaManager.
 
@@ -40,6 +43,7 @@ class SchemaManager:
             table_descriptions_path: Path to JSON file containing table descriptions.
                                    If provided, enables full mac-schema mode with descriptions.
                                    If None, uses mac-schema-basic mode without descriptions.
+            lazy_load: If True, schemas are loaded only when accessed. If False, all schemas are loaded at initialization.
         """
         if supported_modes:
             for mode in supported_modes:
@@ -47,6 +51,7 @@ class SchemaManager:
                     raise ValueError(f"Mode '{mode}' is not supported by the dataset")
         self.dataset = dataset
         self.supported_modes = supported_modes or dataset.supported_modes
+        self.lazy_load = lazy_load
 
         # Load table descriptions if provided
         self.table_descriptions = None
@@ -54,6 +59,9 @@ class SchemaManager:
             with open(table_descriptions_path, "r") as f:
                 self.table_descriptions = json.load(f)
 
+        # Load column meanings if provided
+        self.column_meanings = column_meaning_dict
+  
         # Validate that all requested modes are supported by the dataset
         for mode in self.supported_modes:
             if mode not in dataset.supported_modes:
@@ -62,9 +70,8 @@ class SchemaManager:
         # Initialize schema storage
         self.schema_maps: Dict[str, Dict] = {}
         self.schemas: Dict[str, Dict[str, str]] = {}
-
-        # Load schemas for all databases and modes
-        self._load_schemas()
+        if not self.lazy_load:
+            self._load_schemas()
 
     def _get_table_descriptions(self, db_name: str) -> Optional[Dict]:
         """Get table descriptions for a specific database.
@@ -99,32 +106,30 @@ class SchemaManager:
             return "mac_schema_basic"
         return mode
 
-    def _load_schemas(self):
-        """Load schema descriptions for all databases and modes."""
-        total_steps = len(self.dataset.get_databases()) * len(self.supported_modes)
-        with tqdm.tqdm(total=total_steps, desc="Loading schemas") as pbar:
-            for db_name in self.dataset.get_databases():
-                self.schema_maps[db_name] = self.dataset.get_database_schema(db_name)
-                self.schemas[db_name] = {}
-                for mode in self.supported_modes:
-                    effective_mode = self._get_effective_mode(mode, db_name)
-                    # Handle mac-schema mode specially
-                    if effective_mode == "mac_schema":
-                        # if mac_schema is already loaded, skip
-                        if (
-                            self.schemas[db_name].get("mac_schema") is None
-                            or self.schemas[db_name].get("mac_schema_basic") is None
-                        ):
-                            table_descriptions = self._get_table_descriptions(db_name)
-                            schema = self.dataset.describe_database_schema(
-                                db_name, effective_mode, table_descriptions=table_descriptions
-                            )
-                            self.schemas[db_name]["mac_schema"] = schema
-                            self.schemas[db_name]["mac_schema_basic"] = schema
-                    else:
-                        schema = self.dataset.describe_database_schema(db_name, effective_mode)
-                        self.schemas[db_name][mode] = schema
-                    pbar.update(1)
+    def _load_schema_for(self, db_name: str, mode: str):
+        """Lazily load the schema for a specific database and mode if not already loaded."""
+        # Load schema map if not already loaded
+        if db_name not in self.schema_maps:
+            self.schema_maps[db_name] = self.dataset.get_database_schema(db_name)
+        if db_name not in self.schemas:
+            self.schemas[db_name] = {}
+        effective_mode = self._get_effective_mode(mode, db_name)
+        # Only load if not already loaded
+        if effective_mode == "mac_schema":
+            if (
+                self.schemas[db_name].get("mac_schema") is None
+                or self.schemas[db_name].get("mac_schema_basic") is None
+            ):
+                table_descriptions = self._get_table_descriptions(db_name)
+                schema = self.dataset.describe_database_schema(
+                    db_name, effective_mode, table_descriptions=table_descriptions, column_meaning=self.column_meanings
+                )
+                self.schemas[db_name]["mac_schema"] = schema
+                self.schemas[db_name]["mac_schema_basic"] = schema
+        else:
+            if mode not in self.schemas[db_name]:
+                schema = self.dataset.describe_database_schema(db_name, effective_mode, column_meaning=self.column_meanings)
+                self.schemas[db_name][mode] = schema
 
     def get_filtered_schema(self, database_name: str, filter_dict: Dict[str, List[str]], mode: str) -> str:
         """Get a filtered schema description for a database.
@@ -140,11 +145,14 @@ class SchemaManager:
         Raises:
             ValueError: If database_name or mode is not found
         """
+        # Lazy load schema if needed
+        if database_name not in self.schemas or mode not in self.schemas[database_name]:
+            logger.info(f"Loading schema for {database_name} in {mode} mode")
+            self._load_schema_for(database_name, mode)
         if database_name not in self.schemas:
             raise ValueError(f"Database '{database_name}' not found")
         if mode not in self.schemas[database_name]:
             raise ValueError(f"Mode '{mode}' not found for database '{database_name}'")
-
         full_schema = self.schemas[database_name][mode]
 
         # Apply appropriate filtering function based on mode
@@ -155,10 +163,8 @@ class SchemaManager:
         elif mode == "sql_create":
             # return parse_sql_create(full_schema, filter_dict)
             try:
-                return parse_sql_create_from_source(self.dataset, database_name, filter_dict)
+                return parse_sql_create_from_source(self.dataset, database_name, filter_dict, column_meaning_dict=self.column_meanings.get(database_name))
             except Exception as e:
-                from loguru import logger
-
                 logger.warning(f"Filter Dict: {filter_dict}")
                 logger.warning(f"Error parsing sql create from source: {type(e).__name__}: {str(e)}")
                 return full_schema
@@ -186,6 +192,10 @@ class SchemaManager:
         Raises:
             ValueError: If database_name is not found
         """
+        # Lazy load schema map if needed
+        if database_name not in self.schema_maps:
+            logger.info(f"Loading schema mapping for {database_name}")
+            self.schema_maps[database_name] = self.dataset.get_database_schema(database_name)
         if database_name not in self.schema_maps:
             raise ValueError(f"Database '{database_name}' not found")
         return self.schema_maps[database_name]
@@ -203,9 +213,20 @@ class SchemaManager:
         Raises:
             ValueError: If database_name or mode is not found
         """
+        # Lazy load schema if needed
+        if database_name not in self.schemas or mode not in self.schemas[database_name]:
+            self._load_schema_for(database_name, mode)
         if database_name not in self.schemas:
             raise ValueError(f"Database '{database_name}' not found")
         if mode not in self.schemas[database_name]:
             raise ValueError(f"Mode '{mode}' not found for database '{database_name}'")
-
         return self.schemas[database_name][mode]
+
+    def _load_schemas(self):
+        """Load all schemas for all databases in the dataset."""
+        total_steps = len(self.dataset.get_databases()) * len(self.supported_modes)
+        with tqdm.tqdm(total=total_steps, desc="Loading schemas") as pbar:
+            for db_name in self.dataset.get_databases():
+                for mode in self.supported_modes:
+                    self._load_schema_for(db_name, mode)
+                    pbar.update(1)
