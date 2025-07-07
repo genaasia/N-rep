@@ -574,9 +574,12 @@ def main():
     # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
     os.makedirs(schema_linking_output_dir, exist_ok=True)
-    schema_linking_results, missing_question_ids = load_schema_linking_results(schema_linking_output_dir, test_data, schema_manager)
+    schema_linking_results, missing_question_ids = load_schema_linking_results(schema_linking_output_dir, test_data)
 
     if len(missing_question_ids) > 0:
+        logger.info("Creating schema manager again without column meanings for schema linking")
+        _dataset, schema_manager_wo_col_meanings = prepare_dataset_information(args.test_database_path, args.test_tables_json_path, None)
+
         logger.info(f"Running schema linking for {len(missing_question_ids)} samples")
         logger.debug(f"First 10 missing question ids: {list(missing_question_ids)[:10]}")
         # run schema linking for each sample, with threading executor
@@ -586,7 +589,7 @@ def main():
                     run_candidate_schema_linking,
                     sample,
                     candidate_configs,
-                    schema_manager,
+                    schema_manager_wo_col_meanings,
                 )
                 for idx, sample in enumerate(test_data)
                 if sample["question_id"] in missing_question_ids
@@ -609,6 +612,18 @@ def main():
                     schema_linking_results[question_id][model_name][schema_format] = output
     else:
         logger.info("Skipping schema linking, all results loaded from cache")
+    
+    logger.info(f"Adding column meanings to descriptions")
+    question_db_ids = {sample["question_id"]: sample["db_id"] for sample in test_data}
+
+    for question_id in schema_linking_results:
+        db_id = question_db_ids[question_id]
+        for model_name in schema_linking_results[question_id]:
+            for schema_format in schema_linking_results[question_id][model_name]:
+                schema_linking_output = schema_linking_results[question_id][model_name][schema_format]
+                schema_linking_output.table_description = schema_manager.get_filtered_schema(db_id, schema_linking_output.table_linking, schema_format)
+                schema_linking_output.column_description = schema_manager.get_filtered_schema(db_id, schema_linking_output.column_linking, schema_format)
+                schema_linking_output.full_description = schema_manager.get_full_schema(db_id, schema_format)
 
     for sample in test_data:
         assert sample["question_id"] in schema_linking_results
