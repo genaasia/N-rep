@@ -172,7 +172,7 @@ class SchemaManager:
         elif mode == "sql_create":
             # return parse_sql_create(full_schema, filter_dict)
             try:
-                return parse_sql_create_from_source(self.dataset, database_name, filter_dict, column_meaning_dict=self.column_meanings[database_name])
+                return parse_sql_create_from_source(self.dataset, database_name, filter_dict, column_meaning_dict=self.column_meanings.get(database_name))
             except Exception as e:
                 logger.warning(f"Filter Dict: {filter_dict}")
                 logger.warning(f"Error parsing sql create from source: {type(e).__name__}: {str(e)}")

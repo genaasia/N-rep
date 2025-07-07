@@ -87,7 +87,7 @@ class BaseDataset(ABC):
         if mode == "basic_types_relations":
             return schema_to_basic_format(database_name, schema, include_types=True, include_relations=True)
         elif mode == "sql_create":
-            if column_meaning is not None:
+            if column_meaning:
                 return schema_to_sql_create(database_name, schema, column_meaning=column_meaning[database_name])
             else:
                 return schema_to_sql_create(database_name, schema)
@@ -99,7 +99,7 @@ class BaseDataset(ABC):
                 column_parameters["max_examples"] = max_examples
             column_samples = get_m_schema_column_samples(self, **column_parameters)
             # give column_meaning to the schema_to_m_schema_format function only if it is not None
-            if column_meaning is not None:
+            if column_meaning:
                 return schema_to_m_schema_format(database_name, schema, column_samples, column_meaning=column_meaning[database_name])
             else:
                 return schema_to_m_schema_format(database_name, schema, column_samples)
@@ -118,7 +118,7 @@ class BaseDataset(ABC):
             if max_examples is not None:
                 column_parameters["max_examples"] = max_examples
             column_samples = get_mac_schema_column_samples(self, **column_parameters)
-            if column_meaning is not None:
+            if column_meaning:
                 return schema_to_mac_schema_format(database_name, schema, column_samples, table_descriptions, column_meaning[database_name])
             else:
                 return schema_to_mac_schema_format(database_name, schema, column_samples, table_descriptions)
