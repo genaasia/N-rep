@@ -523,9 +523,9 @@ def main():
     # load column_meaning.json
     if args.column_meaning_json_path is not None:
         with open(args.column_meaning_json_path, "r") as f:
-            column_meaning_json = json.load(f)
+            column_meaning_dict = json.load(f)
     else:
-        column_meaning_json = {}
+        column_meaning_dict = {}
 
     logger.info("Creating embedder...")
     embedder = BedrockCohereEmbedder(
@@ -552,7 +552,7 @@ def main():
     #############################
     # preprocessing
     #############################
-    dataset, schema_manager = prepare_dataset_information(args.test_database_path, args.test_tables_json_path, args.column_meaning_json_path)
+    dataset, schema_manager = prepare_dataset_information(args.test_database_path, args.test_tables_json_path, column_meaning_dict)
     retriever = prepare_fewshot_retriever(args.embeddings_path, args.embeddings_data_path)
 
     logger.info("Preprocessing complete, starting inference...")

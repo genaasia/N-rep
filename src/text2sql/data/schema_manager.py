@@ -31,7 +31,7 @@ class SchemaManager:
         dataset: BaseDataset,
         supported_modes: Optional[List[str]] = None,
         table_descriptions_path: Optional[str] = None,
-        column_meaning_path: Optional[str] = None,
+        column_meaning_dict: Optional[dict] = None,
         lazy_load: bool = False,
     ):
         """Initialize the SchemaManager.
@@ -60,17 +60,8 @@ class SchemaManager:
                 self.table_descriptions = json.load(f)
 
         # Load column meanings if provided
-        self.column_meanings = {}
-        if column_meaning_path is not None:
-            with open(column_meaning_path, "r") as f:
-                col_meaning_data = json.load(f)
-                for key in col_meaning_data.keys():
-                    db_id, table_name, column_name = key.split("|")
-                    if db_id not in self.column_meanings:
-                        self.column_meanings[db_id] = {}
-                    if table_name not in self.column_meanings[db_id]:
-                        self.column_meanings[db_id][table_name] = {}
-                    self.column_meanings[db_id][table_name][column_name] = col_meaning_data[key]
+        self.column_meanings = column_meaning_dict
+  
         # Validate that all requested modes are supported by the dataset
         for mode in self.supported_modes:
             if mode not in dataset.supported_modes:
