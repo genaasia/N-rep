@@ -606,8 +606,8 @@ def main():
     parser.add_argument(
         "--test-tables-json-path",
         type=str,
-        required=True,
-        help="path to the test_tables.json file",
+        default=None,
+        help="path to the test_tables.json file, leave blank if not used.",
     )
     parser.add_argument(
         "--embeddings-path",
@@ -690,7 +690,6 @@ def main():
     # validate all required json files exist
     for path in [
         args.test_json_path,
-        args.test_tables_json_path,
         args.embeddings_path,
         args.embeddings_data_path,
         args.candidate_configs_path,
@@ -700,11 +699,15 @@ def main():
     # validate all required json files are type json
     for path in [
         args.test_json_path,
-        args.test_tables_json_path,
         args.embeddings_data_path,
     ]:
         if not path.endswith(".json"):
             raise ValueError(f"Required file is not json: {path}")
+    if args.test_tables_json_path:
+        if not os.path.isfile(args.test_tables_json_path):
+            raise FileNotFoundError(f"Specified file not found: {args.test_tables_json_path}")
+        if not args.test_tables_json_path.endswith(".json"):
+            raise ValueError(f"Specified file is not json: {args.test_tables_json_path}")
     # validate all numpy files exist
     for path in [args.embeddings_path]:
         if not path.endswith(".npy"):
