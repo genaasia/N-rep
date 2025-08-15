@@ -3,7 +3,10 @@ import yaml
 import argparse
 import json
 import os
-from typing import Dict, List, Any
+import sys
+
+# Add src directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import tqdm
 
@@ -11,7 +14,7 @@ from loguru import logger
 
 from text2sql.data.datasets import SqliteDataset
 from text2sql.evaluation.metrics.execution_match import execution_match
-from run import Candidate, CandidateList
+from run import  CandidateList
 
 def main():
     parser = argparse.ArgumentParser(description="Calculate execution match score for SQL predictions")

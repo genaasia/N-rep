@@ -1,163 +1,52 @@
-import argparse
 import copy
 import json
 import os
 import sys
-
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.pool import ThreadPool
-from typing import Annotated, Literal
+from typing import Literal
 
-import numpy as np
 import tqdm
-import yaml
-
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import AfterValidator, BaseModel
 
+from args import parse_args
 from bird_data.schema_linking_data import SCHEMA_LINKING_EXAMPLES
-
-from text2sql.data import BaseDataset, SqliteDataset, SchemaManager
-from text2sql.data.datasets import SCHEMA_FORMATS
+from cache_loaders import (
+    load_candidate_generations,
+    load_candidate_selections,
+    load_embedding_results,
+    load_fewshot_retrieval_results,
+    load_schema_linking_results,
+    load_agentic_rewrite_results,
+)
+from models import Candidate, CandidateList, CandidateSelection, RewriteInfo, SchemaLinkingInfo
+from pipe_init_steps import (
+    create_output_dir,
+    load_candidate_configs,
+    prepare_dataset_information,
+    prepare_fewshot_retriever,
+    test_generators,
+    verify_env_vars,
+    verify_required_files,
+)
+from result_saver import save_predictions
+from text2sql.data import BaseDataset, SchemaManager
 from text2sql.data.schema_to_text import schema_to_datagrip_format
 from text2sql.engine.embeddings import BaseEmbedder, BedrockCohereEmbedder, EmbeddingResult
-from text2sql.engine.generation import BaseGenerator, AzureGenerator, GCPGenerator, GenerationResult, TokenUsage
-from text2sql.engine.prompts.formatters import GenaCoTwEvidencePromptFormatter
-from text2sql.engine.prompts.formatters import SchemaLinkingFewShotFormatter
-from text2sql.engine.prompts.formatters import RewritePromptFormatter
-from text2sql.engine.retrieval import LocalRetriever
+from text2sql.engine.generation import AzureGenerator, BaseGenerator, GCPGenerator, GenerationResult
 from text2sql.engine.generation.postprocessing import extract_first_code_block
-from text2sql.utils.postprocess import get_table_names_from_query
-from text2sql.utils import parse_json_from_prediction
-
+from text2sql.engine.prompts.formatters import (
+    GenaCoTwEvidencePromptFormatter,
+    RewritePromptFormatter,
+    SchemaLinkingFewShotFormatter,
+)
+from text2sql.engine.retrieval import LocalRetriever
 from text2sql.pipeline.selection import select_best_candidate
+from text2sql.utils import parse_json_from_prediction
+from text2sql.utils.postprocess import get_table_names_from_query
 
-
-def verify_schema_format(schema_format: str):
-    if schema_format not in SCHEMA_FORMATS:
-        raise ValueError(f"Invalid schema format: {schema_format}")
-    return schema_format
-
-
-class SchemaLinkingInfo(BaseModel):
-    question_id: int
-    model_name: str
-    schema_format: Annotated[str, AfterValidator(verify_schema_format)]
-    messages: list[dict]
-    generator_output: GenerationResult
-    prediction: str
-    table_linking: dict | None
-    column_linking: dict | None
-    table_description: str
-    column_description: str
-    full_description: str
-
-
-class RewriteInfo(BaseModel):
-    question_id: int
-    original_sql: str
-    rewritten_sql: str
-    is_rewritten: bool  # whether the candidate was rewritten successfully (even if rewritten sql is same)
-    messages: list[dict]
-    generator_output: GenerationResult | None
-
-
-class Candidate(BaseModel):
-    question_id: int
-    config_index: int
-    sample: dict
-    schema_format: Annotated[str, AfterValidator(verify_schema_format)]
-    schema_filtering: Literal["none", "table", "column"]
-    messages: list[dict]
-    generator_output: GenerationResult
-    original_sql: str  # first generation parsed result
-    candidate_sql: str  # final candidate sql after rewrite
-    rewrite_checked: bool = False
-    rewrite_info: list[RewriteInfo] = []
-
-
-class CandidateList(BaseModel):
-    question_id: int
-    candidate_configs: list[dict]
-    candidates: list[Candidate]
-
-
-class CandidateSelection(BaseModel):
-    question_id: int
-    db_id: str  # for formatting output
-    generator_outputs: list[GenerationResult] = []
-    candidate_config: dict
-    selected_idx: int
-    selected_sql: str
-
-
-def update_moving_average(current_avg, n, new_sample):
-    return (current_avg * n + new_sample) / (n + 1)
-
-
-class TotalTokenUsage(BaseModel):
-    label: str = ""
-    calls: int = 0
-    avg_inf_time_ms: float = 0
-    tokens: TokenUsage = TokenUsage(prompt_tokens=0, output_tokens=0, total_tokens=0, inf_time_ms=0)
-
-    # allow adding to TokenUsage. add to internal tokens TokenUsage and increment calls by one
-    def __add__(self, other: TokenUsage) -> "TotalTokenUsage":
-        self.tokens += other
-        self.calls += 1
-        self.avg_inf_time_ms = update_moving_average(self.avg_inf_time_ms, self.calls, other.inf_time_ms)
-        return self
-
-
-class TokenReport(BaseModel):
-    total: TotalTokenUsage
-    schema_linking: dict[str, TotalTokenUsage]
-    sql_generation: TotalTokenUsage
-    sql_generation_rewrite: TotalTokenUsage
-    candidate_selection: TotalTokenUsage
-    embedding: dict
-
-
-def prepare_dataset_information(
-    test_database_path: str, table_descriptions_path: str | None
-) -> tuple[SqliteDataset, SchemaManager]:
-    """create a database loader and generate the schema descriptions
-
-    Args:
-        test_database_path: path to the test databases base directory
-        table_descriptions_path: path to the table descriptions json file
-    Returns:
-        dataset: SqliteDataset
-        schema_manager: SchemaManager
-    """
-    logger.info(f"Loading dataset from {test_database_path}...")
-    dataset = SqliteDataset(test_database_path)
-    logger.info("Creating schema manager and generating schema descriptions, this may takes some time...")
-    schema_manager = SchemaManager(dataset, table_descriptions_path=table_descriptions_path)
-    return dataset, schema_manager
-
-
-def prepare_fewshot_retriever(embeddings_path: str, embeddings_data_path: str) -> LocalRetriever:
-    """create an in-memory few-shot similarity retriever and load it with preprocessed vectors and data
-
-    Args:
-        embeddings_path: path to the preprocessed numpy embeddings file
-        embeddings_data_path: path to the preprocessed json embeddings data file
-    Returns:
-        retriever: LocalRetriever
-    """
-    logger.info(f"Loading embeddings from {embeddings_path}...")
-    embeddings = np.load(embeddings_path)
-    logger.info(f"Loading embeddings data from {embeddings_data_path}...")
-    embeddings_data = json.load(open(embeddings_data_path))
-    if len(embeddings) != len(embeddings_data):
-        err_message = f"Embeddings and data length mistmatch: {len(embeddings)} != {len(embeddings_data)}"
-        logger.error(err_message)
-        raise ValueError(err_message)
-    retriever = LocalRetriever(embeddings, embeddings_data)
-    return retriever
-
+from agent import AgenticRewrite
 
 def run_embedding(
     embedder: BaseEmbedder,
@@ -543,14 +432,7 @@ def run_candidate_selection(
     database: str = candidates[0].sample["db_id"]
     question: str = candidates[0].sample["question"]
     evidence: str = candidates[0].sample.get("evidence", "")
-    if len(candidates) == 1:
-        return CandidateSelection(
-            question_id=candidates[0].question_id,
-            db_id=database,
-            candidate_config=candidate_configs[0],
-            selected_idx=0,
-            selected_sql=candidates[0].candidate_sql,
-        )
+
     sample_dicts: list[dict] = []
     for candidate in candidates:
         sql_query = candidate.candidate_sql
@@ -565,8 +447,24 @@ def run_candidate_selection(
                 "results": execution_results,
             }
         )
+    
+    if len(candidates) == 1:
+        needs_agentic_rewrite = check_need_rewrite(sample_dicts[0]["results"])
+        if needs_agentic_rewrite:
+            print(f"NEEDING SINGLE candidate agentic rewrite for question {question_id}")
+
+        return CandidateSelection(
+            question_id=candidates[0].question_id,
+            question=question,
+            db_id=database,
+            candidate_config=candidate_configs[0],
+            selected_idx=0,
+            selected_sql=candidates[0].candidate_sql,
+            needs_agentic_rewrite=needs_agentic_rewrite,
+        )
+
     # run selection
-    best_sql, chase_generations = select_best_candidate(
+    best_sql, chase_generations, max_vote_regular, max_vote_chase = select_best_candidate(
         predictions=sample_dicts,
         schema_manager=schema_manager,
         db_id=database,
@@ -578,180 +476,44 @@ def run_candidate_selection(
     # get the (first) index of the best sql
     sqls = [candidate.candidate_sql for candidate in candidates]
     sql_index = sqls.index(best_sql)
+    # get the execution result from the sample dict
+    sql_execution_results = sample_dicts[sql_index]["results"]
+    assert sample_dicts[sql_index]["sql"] == best_sql
+    needs_agentic_rewrite = check_need_rewrite(sql_execution_results)
+    if needs_agentic_rewrite:
+        print(f"NEEDING agentic rewrite for question {question_id}")
 
     return CandidateSelection(
         question_id=question_id,
+        question=question,
         db_id=database,
         generator_outputs=chase_generations,
         candidate_config=candidate_configs[sql_index],
         selected_idx=sql_index,
         selected_sql=best_sql,
+        max_vote_regular=max_vote_regular,
+        max_vote_chase=max_vote_chase,
+        needs_agentic_rewrite=needs_agentic_rewrite,
     )
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--test-database-path",
-        type=str,
-        required=True,
-        help="path to the test databases base directory",
-    )
-    parser.add_argument(
-        "--test-json-path",
-        type=str,
-        required=True,
-        help="path to the test.json file",
-    )
-    parser.add_argument(
-        "--test-tables-json-path",
-        type=str,
-        required=True,
-        help="path to the test_tables.json file",
-    )
-    parser.add_argument(
-        "--embeddings-path",
-        type=str,
-        default="./bird_data/valid_multi_table_queries_embeddings.npy",
-        help="path to preprocessed numpy embeddings file",
-    )
-    parser.add_argument(
-        "--embeddings-data-path",
-        type=str,
-        default="./bird_data/valid_multi_table_queries.json",
-        help="path to preprocessed json embeddings data file",
-    )
-    parser.add_argument(
-        "--output-path",
-        type=str,
-        required=True,
-        default="../outputs",
-        help="target output path",
-    )
-    parser.add_argument(
-        "--candidate-configs-path",
-        type=str,
-        default="./bird_data/consistency_candidate_configs.yaml",
-        help="path to the candidate configs file",
-    )
-    parser.add_argument(
-        "--column-meaning-json-path",
-        type=str,
-        default=None,
-        help="path to the column_meaning.json file, leave blank if not used",
-    )
-    parser.add_argument(
-        "--debug",
-        type=int,
-        default=None,
-        help="run in debug mode (do small subset of data, default is None)",
-    )
-    parser.add_argument(
-        "--num-workers",
-        type=int,
-        default=4,
-        help="number of workers to use for inference, default is 4",
-    )
-    # make it a boolean
-    parser.add_argument(
-        "--save-messages",
-        action="store_true",
-        default=False,
-        help="save messages to separate files for debugging",
-    )
-    # skip test boolean
-    parser.add_argument(
-        "--skip-test",
-        action="store_true",
-        default=False,
-        help="skip llm test",
-    )
-    args = parser.parse_args()
+    args = parse_args()
 
     load_dotenv()
-    # verify environment variables are set
+
     logger.info("Validating environment variables...")
-    if os.getenv("AZURE_OPENAI_API_KEY") is None:
-        raise ValueError("AZURE_OPENAI_API_KEY is not set")
-    if os.getenv("AZURE_OPENAI_API_ENDPOINT") is None:
-        raise ValueError("AZURE_OPENAI_API_ENDPOINT is not set")
-    if os.getenv("AZURE_OPENAI_API_VERSION") is None:
-        raise ValueError("AZURE_OPENAI_API_VERSION is not set")
-    if os.getenv("AZURE_OPENAI_MODEL") is None:
-        raise ValueError("AZURE_OPENAI_MODEL is not set")
-    if os.getenv("GCP_KEY") is None:
-        raise ValueError("GCP_KEY is not set")
-    if os.getenv("AWS_ACCESS_KEY_ID") is None:
-        raise ValueError("AWS_ACCESS_KEY_ID is not set")
-    if os.getenv("AWS_SECRET_ACCESS_KEY") is None:
-        raise ValueError("AWS_SECRET_ACCESS_KEY is not set")
+    verify_env_vars()
 
     logger.info("Validating input files...")
-    # validate all required json files exist
-    for path in [
-        args.test_json_path,
-        args.test_tables_json_path,
-        args.embeddings_path,
-        args.embeddings_data_path,
-        args.candidate_configs_path,
-    ]:
-        if not os.path.isfile(path):
-            raise FileNotFoundError(f"Required file not found: {path}")
-    # validate all required json files are type json
-    for path in [
-        args.test_json_path,
-        args.test_tables_json_path,
-        args.embeddings_data_path,
-    ]:
-        if not path.endswith(".json"):
-            raise ValueError(f"Required file is not json: {path}")
-    # validate all numpy files exist
-    for path in [args.embeddings_path]:
-        if not path.endswith(".npy"):
-            raise ValueError(f"Required file is not numpy: {path}")
+    verify_required_files(args)
 
-    # validate test_database_path exists and is a directory
-    if not os.path.isdir(args.test_database_path):
-        raise FileNotFoundError(f"Databases directory not found: {args.test_database_path}")
+    logger.info("Loading candidate configs...")
+    candidate_configs, top_k = load_candidate_configs(args.candidate_configs_path)
 
-    # load candidate configs
-    top_k = 3  # 3 by default, can override in candidate configs
-    with open(args.candidate_configs_path, "r") as f:
-        candidate_config_data: list[dict] = yaml.safe_load(f)
-        if "configs" not in candidate_config_data:
-            raise ValueError("candidate_config_data must contain a 'configs' key")
-        if "top_k" in candidate_config_data:
-            top_k = candidate_config_data["top_k"]
-        candidate_configs: list[dict] = candidate_config_data["configs"]
-    for config_idx, config in enumerate(candidate_configs):
-        logger.debug(f"Candidate config {config_idx}: {json.dumps(config)}")
+    logger.info("Creating output directory...")
+    create_output_dir(args.output_path, candidate_configs)
 
-    # verify candidate config keys:
-    for config in candidate_configs:
-        assert "schema_format" in config
-        assert "schema_filtering" in config
-        assert "generator" in config
-        assert "model" in config
-        assert config["schema_format"] in SCHEMA_FORMATS
-
-    # if output path does not exist, create it
-    if not os.path.isdir(args.output_path):
-        logger.info(f"Output directory not found, creating it: {args.output_path}")
-        os.makedirs(args.output_path)
-        # save copy of candidate configs, to confirm against when loading
-        with open(os.path.join(args.output_path, "experiment_candidate_configs.yaml"), "w") as f:
-            yaml.dump(candidate_configs, f)
-    else:
-        logger.info(f"Output directory found, existing outputs will be overwritten: {args.output_path}")
-        # check if candidate configs match
-        if not os.path.isfile(os.path.join(args.output_path, "experiment_candidate_configs.yaml")):
-            raise FileNotFoundError("copy of experiment_candidate_configs.yaml not found in output directory")
-        with open(os.path.join(args.output_path, "experiment_candidate_configs.yaml"), "r") as f:
-            candidate_configs_copy: list[dict] = yaml.safe_load(f)
-            if candidate_configs != candidate_configs_copy:
-                raise ValueError("candidate_configs mismatch! must have same configs for restoring data")
-
-    # load test.json
     logger.info("Loading test data...")
     with open(args.test_json_path, "r") as f:
         test_data: list[dict] = json.load(f)
@@ -764,7 +526,6 @@ def main():
     else:
         column_meaning_json = {}
 
-    # create generators
     logger.info("Creating embedder...")
     embedder = BedrockCohereEmbedder(
         model=os.getenv("AWS_MODEL_NAME"),
@@ -774,14 +535,6 @@ def main():
     )
 
     logger.info("Creating generators...")
-    test_messages = [{"role": "user", "content": "What is the capital of South Korea? Answer in one word."}]
-
-    test_azure_generator = AzureGenerator(
-        model=os.getenv("AZURE_OPENAI_MODEL"),
-        api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        azure_endpoint=os.getenv("AZURE_OPENAI_API_ENDPOINT"),
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-    )
     gcp_generator_candidate = GCPGenerator(
         model="gemini-1.5-flash",
         api_key=os.getenv("GCP_KEY"),
@@ -792,10 +545,8 @@ def main():
     )
 
     if not args.skip_test:
-        p = test_azure_generator.generate(test_messages, temperature=0.0)
-        logger.info(f"Azure generator test response: '{p}'")
-        p = gcp_generator_candidate.generate(test_messages, temperature=0.0)
-        logger.info(f"Gemini generator test response: '{p}'")
+        logger.info("Verifying generators are working...")
+        test_generators()
 
     #############################
     # preprocessing
@@ -822,25 +573,7 @@ def main():
     # load any existing schema linking jsons
     schema_linking_output_dir = os.path.join(args.output_path, "1_schema_linking")
     os.makedirs(schema_linking_output_dir, exist_ok=True)
-
-    schema_linking_results: dict = {}
-    for file in sorted(os.listdir(schema_linking_output_dir)):
-        if file.startswith("schema-linking_") and file.endswith(".json"):
-            # get question id from filename
-            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
-            if question_id in test_question_ids:
-                with open(os.path.join(schema_linking_output_dir, file), "r") as f:
-                    schema_linking_output: SchemaLinkingInfo = SchemaLinkingInfo.model_validate_json(f.read())
-                    model_name = schema_linking_output.model_name
-                    schema_format = schema_linking_output.schema_format
-                    if question_id not in schema_linking_results:
-                        schema_linking_results[question_id] = {}
-                    if model_name not in schema_linking_results[question_id]:
-                        schema_linking_results[question_id][model_name] = {}
-                    schema_linking_results[question_id][model_name][schema_format] = schema_linking_output
-    logger.info(f"Loaded {len(schema_linking_results)} cached schema linking results")
-    # check how many samples not in cache based on question_id
-    missing_question_ids = set([s["question_id"] for s in test_data if s["question_id"] not in schema_linking_results])
+    schema_linking_results, missing_question_ids = load_schema_linking_results(schema_linking_output_dir, test_data)
 
     if len(missing_question_ids) > 0:
         logger.info(f"Running schema linking for {len(missing_question_ids)} samples")
@@ -857,8 +590,9 @@ def main():
                 for idx, sample in enumerate(test_data)
                 if sample["question_id"] in missing_question_ids
             ]
-            for question_id, future in tqdm.tqdm(zip(missing_question_ids, futures), total=len(missing_question_ids)):
+            for _, future in tqdm.tqdm(zip(missing_question_ids, futures), total=len(missing_question_ids)):
                 predicted_schema_linking_outputs: list[SchemaLinkingInfo] = future.result()
+                question_id = predicted_schema_linking_outputs[0].question_id
                 for output in predicted_schema_linking_outputs:
                     model_name = output.model_name
                     f_model_name = model_name.replace("_", "").replace(" ", "")
@@ -891,16 +625,7 @@ def main():
     #############################
     embedding_output_dir = os.path.join(args.output_path, "2_embeddings")
     os.makedirs(embedding_output_dir, exist_ok=True)
-    embedding_results: dict[int, EmbeddingResult] = {}
-    for file in os.listdir(embedding_output_dir):
-        if os.path.basename(file).startswith("embedding_qid-") and file.endswith(".json"):
-            # get id from filename
-            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
-            if question_id in test_question_ids:
-                with open(os.path.join(embedding_output_dir, file), "r") as f:
-                    embedding_results[question_id] = EmbeddingResult.model_validate_json(f.read())
-    logger.info(f"Loaded {len(embedding_results)} cached embedding results")
-    missing_samples = [sample for sample in test_data if sample["question_id"] not in embedding_results]
+    embedding_results, missing_samples = load_embedding_results(embedding_output_dir, test_data)
 
     if len(missing_samples) > 0:
         logger.info(f"Running embedding for {len(missing_samples)} samples")
@@ -927,16 +652,7 @@ def main():
     #############################
     fewshot_retrieval_output_dir = os.path.join(args.output_path, "3_fewshot_retrieval")
     os.makedirs(fewshot_retrieval_output_dir, exist_ok=True)
-
-    fewshot_retrieval_results: dict = {}
-    for file in os.listdir(fewshot_retrieval_output_dir):
-        if os.path.basename(file).startswith("fewshot_qid-") and file.endswith(".json"):
-            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
-            if question_id in test_question_ids:
-                with open(os.path.join(fewshot_retrieval_output_dir, file), "r") as f:
-                    fewshot_retrieval_results[question_id] = json.load(f)
-    missing_samples = [sample for sample in test_data if sample["question_id"] not in fewshot_retrieval_results]
-    logger.info(f"Loaded {len(fewshot_retrieval_results)} cached fewshot retrieval results")
+    fewshot_retrieval_results, missing_samples = load_fewshot_retrieval_results(fewshot_retrieval_output_dir, test_data)
 
     if len(missing_samples) > 0:
         logger.info(f"Running fewshot retrieval for {len(missing_samples)} samples")
@@ -965,30 +681,9 @@ def main():
     #############################
     sql_generation_output_dir = os.path.join(args.output_path, "4_candidate_generation")
     os.makedirs(sql_generation_output_dir, exist_ok=True)
-
-    sql_candidate_lists: dict[int, list[Candidate]] = {}
-    for file in os.listdir(sql_generation_output_dir):
-        if os.path.basename(file).startswith("candidates_qid-") and file.endswith(".json"):
-            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
-            if question_id in test_question_ids:
-                with open(os.path.join(sql_generation_output_dir, file), "r") as f:
-                    bundle = CandidateList.model_validate_json(f.read())
-                    # check candidate_configs match
-                    if len(bundle.candidate_configs) != len(candidate_configs):
-                        logger.warning(f"[{question_id}] cached, current candidate_configs mismatch: lens differ")
-                        continue
-                    if any(config != candidate_configs[i] for i, config in enumerate(bundle.candidate_configs)):
-                        logger.warning(f"[{question_id}] cached, current candidate_configs mismatch: contents differ")
-                        continue
-                    for candidate in bundle.candidates:
-                        if candidate.question_id != question_id:
-                            logger.warning(
-                                f"[{question_id}] cached, candidate question_id mismatch: {candidate.question_id}"
-                            )
-                            continue
-                    sql_candidate_lists[question_id] = bundle.candidates
-    logger.info(f"Loaded {len(sql_candidate_lists)} cached sql generation results")
-    missing_samples = [sample for sample in test_data if sample["question_id"] not in sql_candidate_lists]
+    sql_candidate_lists, missing_samples = load_candidate_generations(
+        sql_generation_output_dir, test_data, candidate_configs
+    )
 
     if len(missing_samples) > 0:
         logger.info(f"Running sql generation for {len(missing_samples)} samples")
@@ -1115,16 +810,7 @@ def main():
     #############################
     candidate_selection_output_dir = os.path.join(args.output_path, "5_candidate_selection")
     os.makedirs(candidate_selection_output_dir, exist_ok=True)
-
-    candidate_selections: dict[int, CandidateSelection] = {}
-    for file in os.listdir(candidate_selection_output_dir):
-        if os.path.basename(file).startswith("selection_qid-") and file.endswith(".json"):
-            question_id = int(file.rsplit(".", 1)[0].rsplit("-", 1)[-1])
-            if question_id in test_question_ids:
-                with open(os.path.join(candidate_selection_output_dir, file), "r") as f:
-                    candidate_selections[question_id] = CandidateSelection.model_validate_json(f.read())
-    logger.info(f"Loaded {len(candidate_selections)} cached candidate selection results")
-    missing_samples = [s for s in test_data if s["question_id"] not in candidate_selections]
+    candidate_selections, missing_samples = load_candidate_selections(candidate_selection_output_dir, test_data)
 
     if len(missing_samples) > 0:
         logger.info(f"Running candidate selection for {len(missing_samples)} samples")
@@ -1155,91 +841,37 @@ def main():
 
     logger.info("Candidate selection complete")
 
+
+    agentic_rewrite_output_dir = os.path.join(args.output_path, "6_agentic_rewrite")
+    os.makedirs(agentic_rewrite_output_dir, exist_ok=True)
+    agentic_rewrite_results, missing_samples = load_agentic_rewrite_results(agentic_rewrite_output_dir, test_data)
+
+    agent = AgenticRewrite(schema_manager, dataset)
+    for question_id, candidate_selection in candidate_selections.items():
+        if candidate_selection.max_vote_regular in [0, 1]:
+            candidate_selection.needs_agentic_rewrite = True
+        if candidate_selection.needs_agentic_rewrite and question_id not in agentic_rewrite_results:
+            print(f"Running agentic rewrite for question {question_id}")
+            agentic_rewrite_result = agent.process_row(candidate_selection)
+            if agentic_rewrite_result.rewritten_sql == "PARSING_FAILED":
+                continue
+            agentic_rewrite_results[question_id] = agentic_rewrite_result
+            with open(os.path.join(agentic_rewrite_output_dir, f"agentic_rewrite_qid-{question_id:04d}.json"), "w") as f:
+                f.write(agentic_rewrite_results[question_id].model_dump_json(indent=2))
+
+
     #############################
     # output saving
     #############################
-    # check idx == question_id and add \t----- bird -----\t<db_id>
-    predictions = {}
-    # get ordered question ids
-    ordered_question_ids = sorted(list(candidate_selections.keys()))
-    for question_id in ordered_question_ids:
-        selection: CandidateSelection = candidate_selections[question_id]
-        db_id = selection.db_id
-        prediction = selection.selected_sql
-        predictions[str(question_id)] = prediction + f"\t----- bird -----\t{db_id}"
-    if len(predictions) != len(test_data):
-        raise ValueError(f"predictions length ({len(predictions)}) does not match test data length ({len(test_data)})")
-    with open(os.path.join(args.output_path, "predict.json"), "w") as f:
-        json.dump(predictions, f, indent=2)
-    logger.info(f"predictions saved to {os.path.join(args.output_path, 'predict.json')}")
-
-    # calculate final token counts
-    total_token_counts = TotalTokenUsage(label="total")
-
-    # for schema linking, calculate by model name
-    schema_linking_token_counts: dict[str, TotalTokenUsage] = {}
-    for question_id, model_schema_linking_dict in schema_linking_results.items():
-        for model_name, schema_format_dict in model_schema_linking_dict.items():
-            for schema_format, schema_linking_info in schema_format_dict.items():
-                assert type(schema_linking_info) == SchemaLinkingInfo
-                token_usage = schema_linking_info.generator_output.tokens
-                schema_linking_token_counts[model_name] = (
-                    schema_linking_token_counts.get(model_name, TotalTokenUsage(label=f"schema-linking_{model_name}"))
-                    + token_usage
-                )
-                total_token_counts += token_usage
-    # for sql_generation, get the generation and rewrite token counts separately
-    sql_generation_token_counts = TotalTokenUsage(label="sql_generation")
-    sql_generation_rewrite_token_counts = TotalTokenUsage(label="sql_generation_rewrite")
-    for question_id, candidate_list in sql_candidate_lists.items():
-        for candidate in candidate_list:
-            assert type(candidate) == Candidate
-            sql_generation_token_counts += candidate.generator_output.tokens
-            total_token_counts += candidate.generator_output.tokens
-            for rewrite_info in candidate.rewrite_info:
-                if rewrite_info.generator_output is not None and rewrite_info.generator_output.tokens is not None:
-                    sql_generation_rewrite_token_counts += rewrite_info.generator_output.tokens
-                    total_token_counts += rewrite_info.generator_output.tokens
-
-    # for candidate selection, get the selection token counts
-    candidate_selection_token_counts = TotalTokenUsage(label="candidate_selection")
-    for question_id, candidate_selection in candidate_selections.items():
-        if type(candidate_selection) == CandidateSelection:
-            for output in candidate_selection.generator_outputs:
-                if hasattr(output, "tokens") and output.tokens is not None:
-                    candidate_selection_token_counts += output.tokens
-                    total_token_counts += output.tokens
-
-    embedding_calls = 0
-    embedding_chars = 0
-    inf_time_ms = 0
-    for question_id, embedding_result in embedding_results.items():
-        if type(embedding_result) == EmbeddingResult:
-            embedding_calls += 1
-            embedding_chars += embedding_result.input_characters
-            inf_time_ms += embedding_result.inf_time_ms
-
-    embedding_result = {
-        "label": "embedding",
-        "calls": embedding_calls,
-        "avg_characters": embedding_chars / embedding_calls,
-        "ttl_characters": embedding_chars,
-        "avg_inf_time_ms": inf_time_ms / embedding_calls,
-        "ttl_inf_time_ms": inf_time_ms,
-    }
-
-    token_report = TokenReport(
-        total=total_token_counts,
-        schema_linking=schema_linking_token_counts,
-        sql_generation=sql_generation_token_counts,
-        sql_generation_rewrite=sql_generation_rewrite_token_counts,
-        candidate_selection=candidate_selection_token_counts,
-        embedding=embedding_result,
+    save_predictions(
+        schema_linking_results,
+        embedding_results,
+        sql_candidate_lists,
+        candidate_selections,
+        agentic_rewrite_results,
+        test_data,
+        args.output_path,
     )
-    with open(os.path.join(args.output_path, "token_counts.json"), "w") as f:
-        f.write(token_report.model_dump_json(indent=2))
-    logger.info(f"token counts saved to {os.path.join(args.output_path, 'token_counts.json')}")
-    logger.info(f"all done! check results in {args.output_path}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+You now have updated results from your new exploratory queries.
+
+Using this information, write a corrected final SQL query that fully answers the original question.
+
+Original Question:
+{QUESTION}
+
+New Exploratory Query Results:
+{RESULTS}
+
+When forming your `SELECT` clause, include only the columns that are explicitly asked for in the user's question. Do not include additional columns, even if they seem related or helpful.
+
+Output only the final SQL query string — no explanation, markdown, or formatting.
